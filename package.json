@@ -1,0 +1,31 @@
+{
+    "name": "Bugoslav Skannerov",
+    "version": "1.0.0",
+    "description": "CLI tool for scanning vulnerabilities in .NET and TypeScript projects",
+    "type": "module",
+    "main": "src/index.ts",
+    "scripts": {
+      "scan": "bun run src/index.ts",
+      "dev": "bun run --watch src/index.ts",
+      "build": "bun build src/index.ts --outdir dist --target node",
+      "test": "bun test"
+    },
+    "keywords": [
+      "vulnerability",
+      "security",
+      "scanner",
+      "osv",
+      "nvd",
+      "github-advisory",
+      "dotnet",
+      "npm"
+    ],
+    "author": "Bartłomiej Komendarczuk",
+    "license": "MIT",
+    "devDependencies": {
+      "@types/bun": "latest"
+    },
+    "peerDependencies": {
+      "typescript": "^5.0.0"
+    }
+  }
