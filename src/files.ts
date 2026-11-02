@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { Dependency } from "./types.js";
 
 // Dependency, build output, virtual environment and VCS folders never contain the project's own manifests.
@@ -21,6 +21,12 @@ export function findFiles(root: string, match: (fileName: string) => boolean): s
   };
   walk(root);
   return files.sort();
+}
+
+/** Records which manifest (path relative to the project root, with forward slashes) each dependency was read from. */
+export function withManifest(deps: Dependency[], projectPath: string, file: string): Dependency[] {
+  const manifest = relative(projectPath, file).split(sep).join("/");
+  return deps.map(dep => ({ ...dep, manifest }));
 }
 
 export function readJson(path: string): any {

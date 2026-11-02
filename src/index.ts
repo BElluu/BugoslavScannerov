@@ -8,17 +8,18 @@ import { dedupeDependencies } from "./files.js";
 import { generateReport } from "./reporter.js";
 import { calculateStats, deduplicateResults, filterSkippedPackages, shouldFail } from "./results.js";
 import { suggestFixes } from "./fix-suggester.js";
+import { applyIgnoreRules, DEFAULT_CONFIG_FILE, loadIgnoreRules } from "./config.js";
+import { UsageError } from "./utils.js";
 import type { Config, Dependency, FailOn, FixSuggestion } from "./types.js";
 
 import pkg from "../package.json" with { type: "json" };
 
 const VERSION = pkg.version;
 
-const FORMATS = ["markdown", "json", "html"] as const;
+const FORMATS = ["markdown", "json", "html", "sarif"] as const;
 const SCAN_TYPES = ["all", "fast"] as const;
 const FAIL_ON = ["none", "low", "medium", "high", "critical"] as const;
 
-class UsageError extends Error {}
 
 function oneOf<T extends string>(name: string, value: string, allowed: readonly T[]): T {
   if (!(allowed as readonly string[]).includes(value)) {
@@ -39,6 +40,7 @@ function parseConfig(): { config: Config; projectPath: string } | undefined {
       suggestFixes: { type: "boolean", default: false },
       failOn: { type: "string", default: "low" },
       noEnrich: { type: "boolean", default: false },
+      config: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -58,6 +60,7 @@ function parseConfig(): { config: Config; projectPath: string } | undefined {
       suggestFixes: values.suggestFixes!,
       failOn: oneOf("failOn", values.failOn!, FAIL_ON) as FailOn,
       enrich: !values.noEnrich,
+      configPath: values.config,
     },
   };
 }
@@ -89,9 +92,15 @@ async function main(): Promise<number> {
     console.log("🔎 Enriching with CISA KEV and EPSS...");
     await enrichResults(unique);
   }
-  const results = deduplicateResults(filterSkippedPackages(unique, config.skipPackages));
+  const { kept: results, expired } = applyIgnoreRules(
+    filterSkippedPackages(unique, config.skipPackages),
+    loadIgnoreRules(projectPath, config.configPath)
+  );
+  for (const rule of expired) {
+    console.warn(`⚠️  Ignore rule for ${rule.id} expired on ${rule.expires} and no longer applies.`);
+  }
   const skipped = unique.length - results.length;
-  if (skipped > 0) console.log(`⏭️  Skipped ${skipped} vulnerabilities due to skipped packages`);
+  if (skipped > 0) console.log(`⏭️  Ignored ${skipped} vulnerabilities (skipped packages or ${DEFAULT_CONFIG_FILE} rules)`);
 
   let fixSuggestions: FixSuggestion[] | undefined;
   if (config.suggestFixes && results.length > 0) {
@@ -165,11 +174,12 @@ Options:
   -p, --path <path>        Project path to scan (default: current directory)
   -t, --scanType <type>    all | fast. all scans transitive dependencies too, fast only direct ones (default: all)
   -o, --output <path>      Report path without extension (default: bugoslav-scannerov-report)
-  -f, --format <format>    markdown | json | html (default: html)
+  -f, --format <format>    markdown | json | html | sarif (default: html)
       --skip <packages>    Comma-separated package names to skip
       --suggestFixes       Suggest fixes for vulnerabilities
       --failOn <severity>  Exit with code 1 at or above: none | low | medium | high | critical (default: low)
       --noEnrich           Do not query CISA KEV and EPSS
+      --config <path>      Config file with ignore rules (default: .bugoslavrc.json in the project)
   -h, --help               Show this help message
 
 Exit codes: 0 = pass, 1 = vulnerabilities at or above --failOn, 2 = error.

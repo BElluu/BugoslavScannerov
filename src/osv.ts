@@ -95,6 +95,7 @@ export function convertOSVToResult(dep: Dependency, vuln: OSVVulnerability): Sca
     package: dep.name,
     version: dep.version,
     ecosystem: dep.ecosystem,
+    manifest: dep.manifest,
     cveId: cve ?? vuln.id,
     ghsaId: aliases.find(a => a.startsWith("GHSA-")),
     severity,

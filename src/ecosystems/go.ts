@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Dependency, EcosystemDefinition, ScanType } from "../types.js";
-import { dedupeDependencies, findFiles } from "../files.js";
+import { dedupeDependencies, findFiles, withManifest } from "../files.js";
 import { fetchText } from "../utils.js";
 
 /**
@@ -45,7 +45,7 @@ export const go: EcosystemDefinition = {
     return dedupeDependencies(
       findFiles(projectPath, name => name === "go.mod").flatMap(path => {
         console.log(`📦 Detected Go module: ${path}`);
-        return parseGoMod(readFileSync(path, "utf-8"), scanType);
+        return withManifest(parseGoMod(readFileSync(path, "utf-8"), scanType), projectPath, path);
       })
     );
   },

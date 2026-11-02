@@ -8,7 +8,8 @@ CLI tool for scanning vulnerabilities in **JavaScript/TypeScript, .NET, Python, 
 - ⚡ Fast: one batched OSV query, no API keys or tokens needed
 - 🎯 Accurate: severity from the CVSS vector, the fix version taken from the advisory range that matches your installed version, withdrawn advisories ignored
 - 🔥 Prioritisation: flags vulnerabilities listed in CISA's Known Exploited Vulnerabilities catalog and shows the EPSS exploit probability
-- 📄 Reports: **Markdown**, **JSON**, **HTML**
+- 📄 Reports: **Markdown**, **JSON**, **HTML** and **SARIF** (GitHub Code Scanning)
+- 🙈 Accepted risks: ignore rules with a mandatory reason and optional expiry date
 - 🚦 CI-ready: configurable failure threshold (`--failOn`) and meaningful exit codes
 - 🔧 Optional fix suggestions with ready-to-run update commands
 
@@ -67,11 +68,12 @@ Adding an ecosystem is one file in `src/ecosystems/` plus one line in `src/ecosy
 | `--path` | `-p` | Project path to scan | `.` |
 | `--scanType` | `-t` | `all` (including transitive dependencies) or `fast` (direct only) | `all` |
 | `--output` | `-o` | Report path **without extension**; the format's extension is added | `bugoslav-scannerov-report` |
-| `--format` | `-f` | `markdown`, `json` or `html` | `html` |
+| `--format` | `-f` | `markdown`, `json`, `html` or `sarif` | `html` |
 | `--skip` | | Comma-separated package names to skip (case-insensitive) | none |
 | `--suggestFixes` | | Suggest fixes using the package registries | `false` |
 | `--failOn` | | Exit with code 1 at or above this severity: `none`, `low`, `medium`, `high`, `critical` | `low` |
 | `--noEnrich` | | Do not query CISA KEV and EPSS | `false` |
+| `--config` | | Config file with ignore rules | `.bugoslavrc.json` in the project |
 | `--help` | `-h` | Show help | |
 
 ### Exit codes
@@ -95,7 +97,62 @@ Finds the lowest published version that fixes all advisories of a package, build
 
 ### Skipping packages (`--skip`)
 
-Excludes the named packages from the results. Skipped findings are listed separately in the report.
+Excludes the named packages from the results. Skipped findings are listed separately in the report. This hides every present and future advisory of the package, so prefer an ignore rule for accepted risks.
+
+### Ignoring accepted risks (`.bugoslavrc.json`)
+
+To accept a specific advisory, add a rule to `.bugoslavrc.json` in the scanned project (or pass `--config <path>`):
+
+```json
+{
+  "ignore": [
+    {
+      "id": "CVE-2021-23337",
+      "package": "lodash",
+      "reason": "Template option is never built from user input",
+      "expires": "2027-01-31"
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `id` | yes | CVE or GHSA id of the advisory |
+| `reason` | yes | Why the risk is accepted, so exceptions stay reviewable |
+| `package` | no | Limit the rule to one package |
+| `expires` | no | Last day (`YYYY-MM-DD`, inclusive) the rule applies. Afterwards the finding is reported again and a warning is printed |
+
+Ignored findings are listed in a separate section of the report and do not affect `--failOn`.
+
+## 🛡️ GitHub Code Scanning (SARIF)
+
+`--format sarif` writes a [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) file. Each finding points at the manifest or lockfile that declares the dependency, and the CVSS score is passed as `security-severity` so GitHub shows the right severity.
+
+```yaml
+# .github/workflows/security.yml
+name: Dependency scan
+on: [push, pull_request]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx bugoslav-scannerov --format sarif --output results --failOn none
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+```
+
+`--failOn none` lets the upload step decide; use a different threshold if the job itself should fail.
 
 ## 📊 Data sources
 
@@ -118,11 +175,13 @@ src/
 ├── files.ts          # Recursive file search, TOML lockfile reader
 ├── osv.ts            # OSV client and advisory conversion
 ├── enrich.ts         # CISA KEV and EPSS
+├── config.ts         # .bugoslavrc.json ignore rules
+├── sarif.ts          # SARIF 2.1.0 output
 ├── version.ts        # Version comparison and OSV range matching
 ├── cvss.ts           # CVSS v3 base score
 ├── results.ts        # Deduplication, sorting, fail threshold
 ├── fix-suggester.ts  # Fix suggestions
-├── reporter.ts       # Markdown / JSON / HTML reports
+├── reporter.ts       # Markdown / JSON / HTML / SARIF reports
 └── utils.ts
 test/                 # bun test
 ```

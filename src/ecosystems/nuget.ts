@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, parse as parsePath } from "node:path";
 import type { Dependency, EcosystemDefinition, ScanType } from "../types.js";
-import { dedupeDependencies, findFiles, readJson } from "../files.js";
+import { dedupeDependencies, findFiles, readJson, withManifest } from "../files.js";
 import { fetchJson } from "../utils.js";
 
 /** Normalises a NuGet version spec ("1.2.3", "[1.2.3]", "[1.0,2.0)") to its lower bound. */
@@ -85,7 +85,8 @@ export const nuget: EcosystemDefinition = {
   detect(projectPath, scanType) {
     return findFiles(projectPath, name => name.toLowerCase().endsWith(".csproj")).flatMap(csproj => {
       console.log(`📦 Detected .NET project: ${csproj}`);
-      return parseDotNetDependencies(csproj, scanType);
+      const lock = join(dirname(csproj), "packages.lock.json");
+      return withManifest(parseDotNetDependencies(csproj, scanType), projectPath, existsSync(lock) ? lock : csproj);
     });
   },
   registry: {

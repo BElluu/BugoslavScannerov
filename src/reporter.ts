@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 import type { Config, FixSuggestion, ScanResult } from './types.js';
 import { escapeHtml, safeUrl } from './utils.js';
 import { ECOSYSTEMS } from './ecosystems/index.js';
+import { toSarif } from './sarif.js';
+import pkg from '../package.json' with { type: 'json' };
 
 export async function generateReport(
   results: ScanResult[],
@@ -15,6 +17,8 @@ export async function generateReport(
   switch (config.outputFormat) {
     case 'json':
       return generateJSON(results, config, allResults, fixSuggestions, timestamp);
+    case 'sarif':
+      return writeReport(config, 'sarif', JSON.stringify(toSarif(results, pkg.version), null, 2));
     case 'markdown':
       return generateMarkdown(results, config, allResults, fixSuggestions, timestamp);
     case 'html':
@@ -25,8 +29,8 @@ export async function generateReport(
 
 /** Writes the report to `<outputPath>.<ext>`, creating parent folders. Returns the written path. */
 function writeReport(config: Config, extension: string, content: string): string {
-  const base = config.outputPath.replace(new RegExp(`\.${extension}$`, 'i'), '');
-  const filename = `${base}.${extension}`;
+  const suffix = `.${extension}`;
+  const filename = config.outputPath.toLowerCase().endsWith(suffix) ? config.outputPath : config.outputPath + suffix;
   mkdirSync(dirname(filename), { recursive: true });
   writeFileSync(filename, content);
   return filename;
@@ -88,7 +92,7 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
   md += `- **Total Vulnerabilities:** ${results.length}\n`;
 
   if (skippedResults.length > 0) {
-    md += `- **Skipped Vulnerabilities:** ${skippedResults.length}\n`;
+    md += `- **Ignored Vulnerabilities:** ${skippedResults.length}\n`;
   }
 
   if (fixSuggestions) {
@@ -215,8 +219,8 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
   }
 
   if (skippedResults.length > 0) {
-    md += `## Skipped Vulnerabilities (Ignored Packages)\n\n`;
-    md += `The following vulnerabilities were found but ignored due to package skip list:\n\n`;
+    md += `## Ignored Vulnerabilities\n\n`;
+    md += `The following vulnerabilities were found but ignored (skipped packages or ignore rules):\n\n`;
 
     const groupedByPackage = skippedResults.reduce((acc, vuln) => {
       if (!acc[vuln.package]) acc[vuln.package] = [];
@@ -225,7 +229,7 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
     }, {} as Record<string, ScanResult[]>);
 
     for (const [pkg, vulns] of Object.entries(groupedByPackage)) {
-      md += `### \`${pkg}\` - ${vulns.length} vulnerabilities skipped\n\n`;
+      md += `### \`${pkg}\` - ${vulns.length} vulnerabilities ignored\n\n`;
       vulns.forEach(v => {
         md += `- ${getSeverityIcon(v.severity)} **${v.cveId}** (${v.severity}): ${v.summary.substring(0, 100)}...\n`;
       });
@@ -804,7 +808,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
 
     ${skippedResults.length > 0 ? `
       <div class="skipped-section">
-        <h2>⏭️ Skipped Vulnerabilities (Ignored Packages)</h2>
+        <h2>⏭️ Ignored Vulnerabilities</h2>
         ${Object.entries(
       skippedResults.reduce((acc, vuln) => {
         if (!acc[vuln.package]) acc[vuln.package] = [];
@@ -813,7 +817,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
       }, {} as Record<string, typeof skippedResults>)
     ).map(([pkg, vulns]) => `
           <div class="skipped-package">
-            <h3><code>${escapeHtml(pkg)}</code> - ${vulns.length} vulnerabilities skipped</h3>
+            <h3><code>${escapeHtml(pkg)}</code> - ${vulns.length} vulnerabilities ignored</h3>
             ${vulns.map(v => `
               <div class="skipped-vuln">
                 ${getSeverityIcon(v.severity)} <strong>${escapeHtml(v.cveId)}</strong> (${v.severity}): ${escapeHtml(v.summary.substring(0, 100))}...
