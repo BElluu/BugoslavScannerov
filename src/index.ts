@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +10,9 @@ import { calculateStats, deduplicateResults, filterSkippedPackages, shouldFail }
 import { suggestFixes } from "./fix-suggester.js";
 import type { Config, Dependency, FailOn, FixSuggestion } from "./types.js";
 
-const VERSION = "1.0.0";
+import pkg from "../package.json" with { type: "json" };
+
+const VERSION = pkg.version;
 
 const FORMATS = ["markdown", "json", "html"] as const;
 const SCAN_TYPES = ["all", "fast"] as const;
@@ -169,7 +171,7 @@ function printHelp() {
   console.log(`
 Bugoslav Scannerov v${VERSION}
 
-Usage: bun run scan [options]
+Usage: bugoslav [options]
 
 Options:
   -p, --path <path>        Project path to scan (default: current directory)
@@ -185,9 +187,9 @@ Options:
 Exit codes: 0 = pass, 1 = vulnerabilities at or above --failOn, 2 = error.
 
 Examples:
-  bun run scan
-  bun run scan --path ./my-project --scanType fast --failOn high
-  bun run scan --format json --output report
+  bugoslav
+  bugoslav --path ./my-project --scanType fast --failOn high
+  bugoslav --format json --output report
   `);
 }
 

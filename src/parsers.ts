@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, parse as parsePath } from "node:path";
 import type { Dependency } from "./types.js";
 
@@ -168,13 +168,20 @@ export function parseDotNetDependencies(csprojPath: string, scanType: ScanType):
   return dedupeDependencies(parseCsprojPackageReferences(content, centralPackageVersions(dir)));
 }
 
-/** Finds .csproj files below `projectPath`, ignoring dependency and build output folders. */
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "bin", "obj", ".git"]);
+
+/** Finds .csproj files below `projectPath`, ignoring dependency, build output and VCS folders. */
 export function findCsprojFiles(projectPath: string): string[] {
   const files: string[] = [];
-  for (const file of new Bun.Glob("**/*.csproj").scanSync({ cwd: projectPath })) {
-    const normalized = file.replace(/\\/g, "/");
-    if (/(^|\/)(node_modules|bin|obj)\//.test(normalized)) continue;
-    files.push(join(projectPath, normalized));
-  }
-  return files;
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRECTORIES.has(entry.name)) walk(join(dir, entry.name));
+      } else if (entry.name.toLowerCase().endsWith(".csproj")) {
+        files.push(join(dir, entry.name));
+      }
+    }
+  };
+  walk(projectPath);
+  return files.sort();
 }

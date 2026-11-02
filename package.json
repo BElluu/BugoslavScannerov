@@ -1,32 +1,51 @@
 {
-    "name": "Bugoslav Skannerov",
-    "version": "1.0.0",
-    "description": "CLI tool for scanning vulnerabilities in .NET and TypeScript projects",
-    "type": "module",
-    "main": "src/index.ts",
-    "scripts": {
-      "scan": "bun run src/index.ts",
-      "dev": "bun run --watch src/index.ts",
-      "build": "bun build src/index.ts --outdir dist --target node",
-      "test": "bun test",
-      "typecheck": "tsc --noEmit"
-    },
-    "keywords": [
-      "vulnerability",
-      "security",
-      "scanner",
-      "osv",
-      "nvd",
-      "github-advisory",
-      "dotnet",
-      "npm"
-    ],
-    "author": "Bartłomiej Komendarczuk",
-    "license": "MIT",
-    "devDependencies": {
-      "@types/bun": "latest"
-    },
-    "peerDependencies": {
-      "typescript": "^5.0.0"
-    }
+  "name": "bugoslav-scannerov",
+  "version": "2.0.0",
+  "description": "CLI vulnerability scanner for .NET and TypeScript/JavaScript projects, powered by OSV with CISA KEV and EPSS prioritisation",
+  "type": "module",
+  "bin": {
+    "bugoslav": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "scan": "bun run src/index.ts",
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target node",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun test && bun run build"
+  },
+  "keywords": [
+    "vulnerability",
+    "security",
+    "scanner",
+    "osv",
+    "epss",
+    "cisa-kev",
+    "dotnet",
+    "nuget",
+    "npm",
+    "sca"
+  ],
+  "author": "Bartłomiej Komendarczuk",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BElluu/BugoslavScannerov.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BElluu/BugoslavScannerov/issues"
+  },
+  "homepage": "https://github.com/BElluu/BugoslavScannerov#readme",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
   }
+}
