@@ -1,48 +1,57 @@
+export type Ecosystem = "npm" | "nuget";
+
+export type Severity = "critical" | "high" | "medium" | "low" | "unknown";
+
+export type FailOn = Exclude<Severity, "unknown"> | "none";
+
 export interface Dependency {
   name: string;
   version: string;
-  ecosystem: "npm" | "nuget";
+  ecosystem: Ecosystem;
 }
 
 export interface ScanResult {
   package: string;
   version: string;
-  ecosystem: string;
+  ecosystem: Ecosystem;
+  /** CVE id when the advisory has one, otherwise the advisory's own id. */
   cveId: string;
   ghsaId?: string;
-  cveIdFromGhsa?: string;
-  severity: "critical" | "high" | "medium" | "low" | "moderate" | "unknown";
+  severity: Severity;
   summary: string;
   details?: string;
   references: string[];
-  source: "osv" | "github" | "nvd";
   cvssScore?: number;
   publishedDate?: string;
   fixedVersion?: string;
+  /** Listed in CISA's Known Exploited Vulnerabilities catalog. */
+  knownExploited?: boolean;
+  /** EPSS probability (0-1) that the CVE is exploited in the next 30 days. */
+  epss?: number;
 }
 
 export interface Config {
   scanType: "all" | "fast";
-  sources: string[];
   outputFormat: "markdown" | "json" | "html";
   outputPath: string;
-  githubToken?: string;
-  nvdApiKey?: string;
   skipPackages: string[];
   suggestFixes: boolean;
+  failOn: FailOn;
+  enrich: boolean;
 }
 
 export interface OSVVulnerability {
   id: string;
-  summary: string;
+  summary?: string;
   details?: string;
   aliases?: string[];
+  withdrawn?: string;
   severity?: Array<{
     type: string;
     score: string;
   }>;
   affected?: Array<{
-    package: {
+    package?: {
       name: string;
       ecosystem: string;
     };
@@ -51,6 +60,7 @@ export interface OSVVulnerability {
       events: Array<{
         introduced?: string;
         fixed?: string;
+        last_affected?: string;
       }>;
     }>;
     versions?: string[];
@@ -63,36 +73,6 @@ export interface OSVVulnerability {
   database_specific?: {
     severity?: string;
   };
-}
-
-export interface NVDResponse {
-  vulnerabilities: Array<{
-    cve: {
-      id: string;
-      descriptions: Array<{
-        lang: string;
-        value: string;
-      }>;
-      metrics?: {
-        cvssMetricV31?: Array<{
-          cvssData: {
-            baseScore: number;
-            baseSeverity: string;
-          };
-        }>;
-        cvssMetricV2?: Array<{
-          cvssData: {
-            baseScore: number;
-          };
-          baseSeverity: string;
-        }>;
-      };
-      references: Array<{
-        url: string;
-      }>;
-      published?: string;
-    };
-  }>;
 }
 
 export interface FixSuggestion {

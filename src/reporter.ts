@@ -1,5 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { Config, FixSuggestion, ScanResult } from './types.js';
+import { escapeHtml, safeUrl } from './utils.js';
 
 export async function generateReport(
   results: ScanResult[],
@@ -7,12 +9,7 @@ export async function generateReport(
   allResults?: ScanResult[],
   fixSuggestions?: FixSuggestion[]
 ): Promise<string> {
-  let timestamp = new Date().toISOString();
-  timestamp = timestamp.replace(/[:.]/g, '-');
-  timestamp = timestamp.replace(/T/g, '-');
-  timestamp = timestamp.replace(/Z/g, '');
-  timestamp = timestamp.replace(/ /g, '-');
-  timestamp = timestamp.replace(/ /g, '-');
+  const timestamp = new Date().toISOString();
 
   switch (config.outputFormat) {
     case 'json':
@@ -25,6 +22,19 @@ export async function generateReport(
   }
 }
 
+/** Writes the report to `<outputPath>.<ext>`, creating parent folders. Returns the written path. */
+function writeReport(config: Config, extension: string, content: string): string {
+  const base = config.outputPath.replace(new RegExp(`\.${extension}$`, 'i'), '');
+  const filename = `${base}.${extension}`;
+  mkdirSync(dirname(filename), { recursive: true });
+  writeFileSync(filename, content);
+  return filename;
+}
+
+function safeLink(url: string | null): string | null {
+  return url && safeUrl(url) ? url : null;
+}
+
 function generateJSON(
   results: ScanResult[],
   config: Config,
@@ -33,7 +43,7 @@ function generateJSON(
   timestamp: string
 ): string {
   const skippedResults = allResults
-    ? allResults.filter(r => !results.find(fr => fr.package === r.package && fr.cveId === r.cveId))
+    ? allResults.filter(r => !results.includes(r))
     : [];
   const report = {
     timestamp,
@@ -49,20 +59,17 @@ function generateJSON(
     },
     config: {
       skipPackages: config.skipPackages,
-      sources: config.sources,
       suggestFixes: config.suggestFixes,
     },
     vulnerabilities: results,
     skippedVulnerabilities: skippedResults.length > 0 ? skippedResults : undefined,
     fixSuggestions: fixSuggestions || undefined,
   };
-  const fileName = `${config.outputPath}/bugoslav-scannerov-report-${timestamp}.json`;
-  writeFileSync(fileName, JSON.stringify(report, null, 2));
-  return fileName;
+  return writeReport(config, 'json', JSON.stringify(report, null, 2));
 }
 
 function generateMarkdown(results: ScanResult[], config: Config, allResults: ScanResult[] | undefined, fixSuggestions: FixSuggestion[] | undefined, timestamp: string): string {
-  let md = `# Bugoslav Skannerov Report\n\n`;
+  let md = `# Bugoslav Scannerov Report\n\n`;
   md += `**Generated:** ${timestamp}\n\n`;
 
   const stats = {
@@ -73,7 +80,7 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
   };
 
   const skippedResults = allResults
-    ? allResults.filter(r => !results.find(fr => fr.package === r.package && fr.cveId === r.cveId))
+    ? allResults.filter(r => !results.includes(r))
     : [];
 
   md += `## Summary\n\n`;
@@ -169,8 +176,8 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
   md += `## Vulnerabilities\n\n`;
 
   for (const result of results) {
-    const nvdLink = generateNVDLink(result.cveId, result.references);
-    const ghsaLink = generateGHSALink(result.cveId, result.references, result.ghsaId);
+    const nvdLink = safeLink(generateNVDLink(result.cveId, result.references));
+    const ghsaLink = safeLink(generateGHSALink(result.cveId, result.references, result.ghsaId));
     const icon = getSeverityIcon(result.severity);
     md += `### ${icon} ${result.cveId}\n\n`;
 
@@ -192,12 +199,17 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
     if (result.cvssScore) {
       md += `- **CVSS Score:** ${result.cvssScore}\n`;
     }
-    md += `- **Source:** ${result.source}\n`;
+    if (result.knownExploited) {
+      md += `- 🔥 **Known exploited** (CISA KEV)\n`;
+    }
+    if (result.epss !== undefined) {
+      md += `- **EPSS:** ${(result.epss * 100).toFixed(1)}%\n`;
+    }
     if (result.fixedVersion) {
       md += `- **Fixed in:** ${result.fixedVersion}\n`;
     }
 
-    const fix = fixSuggestions?.find(f => f.package === result.package);
+    const fix = fixSuggestions?.find(f => f.package === result.package && f.currentVersion === result.version);
     if (fix?.fixAvailable) {
       md += `- 🔧 **Fix Available:** Update to ${fix.recommendedVersion}\n`;
     }
@@ -238,10 +250,7 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
     }
   }
 
-  const filename = `${config.outputPath}bugoslav-scannerov-report.md`;
-  console.log(filename);
-  writeFileSync(filename, md);
-  return filename;
+  return writeReport(config, 'md', md);
 }
 
 function generateHTML(results: ScanResult[], config: Config, allResults: ScanResult[] | undefined, fixSuggestions: FixSuggestion[] | undefined, timestamp: string): string {
@@ -253,7 +262,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
   };
 
   const skippedResults = allResults
-    ? allResults.filter(r => !results.find(fr => fr.package === r.package && fr.cveId === r.cveId))
+    ? allResults.filter(r => !results.includes(r))
     : [];
 
   const fixableCount = fixSuggestions?.filter(f => f.fixAvailable).length || 0;
@@ -720,7 +729,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
       <div class="ignored-packages">
         <h3>⏭️ Ignored Packages</h3>
         <ul>
-          ${config.skipPackages.map(pkg => `<li>${pkg}</li>`).join('')}
+          ${config.skipPackages.map(pkg => `<li>${escapeHtml(pkg)}</li>`).join('')}
         </ul>
       </div>
     ` : ''}
@@ -760,16 +769,16 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
     ${fixSuggestions && fixSuggestions.length > 0 ? generateFixSuggestionsHTML(fixSuggestions) : ''}
 
     ${results.map(result => {
-    const nvdLink = generateNVDLink(result.cveId, result.references);
-    const ghsaLink = generateGHSALink(result.cveId, result.references, result.ghsaId);
-    const fix = fixSuggestions?.find(f => f.package === result.package);
+    const nvdLink = safeLink(generateNVDLink(result.cveId, result.references));
+    const ghsaLink = safeLink(generateGHSALink(result.cveId, result.references, result.ghsaId));
+    const fix = fixSuggestions?.find(f => f.package === result.package && f.currentVersion === result.version);
     return `
       <div class="vulnerability">
         <div class="vuln-header">
-          <div class="vuln-id">${result.cveId}</div>
+          <div class="vuln-id">${escapeHtml(result.cveId)}</div>
           <div style="display: flex; gap: 10px; align-items: center;">
             ${nvdLink ? `
-              <a href="${nvdLink}" target="_blank" class="external-link nvd-link" title="View on NVD">
+              <a href="${escapeHtml(nvdLink)}" target="_blank" class="external-link nvd-link" title="View on NVD">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5z"/>
                   <path d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0v-5z"/>
@@ -778,7 +787,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
               </a>
             ` : ''}
             ${ghsaLink ? `
-              <a href="${ghsaLink}" target="_blank" class="external-link github-link" title="View on GitHub Advisory">
+              <a href="${escapeHtml(ghsaLink)}" target="_blank" class="external-link github-link" title="View on GitHub Advisory">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
                 </svg>
@@ -790,20 +799,21 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
         </div> <!-- zamykamy vuln-header tutaj -->
 
         <div class="meta">
-          <span>📦 <code>${result.package}@${result.version}</code></span>
-          <span>🏷️ ${result.ecosystem}</span>
-          <span>🔍 ${result.source}</span>
+          <span>📦 <code>${escapeHtml(result.package)}@${escapeHtml(result.version)}</code></span>
+          <span>🏷️ ${escapeHtml(result.ecosystem)}</span>
+          ${result.knownExploited ? '<span class="severity-badge severity-critical">🔥 Known exploited (CISA KEV)</span>' : ''}
+          ${result.epss !== undefined ? `<span>🎯 EPSS: ${(result.epss * 100).toFixed(1)}%</span>` : ''}
           ${result.cvssScore ? `<span>📊 CVSS: ${result.cvssScore}</span>` : ''}
-          ${result.fixedVersion ? `<span>✅ Fixed: ${result.fixedVersion}</span>` : ''}
-          ${fix?.fixAvailable ? `<span style="color: #2e7d32;">🔧 Fix Available: ${fix.recommendedVersion}</span>` : ''}
+          ${result.fixedVersion ? `<span>✅ Fixed: ${escapeHtml(result.fixedVersion)}</span>` : ''}
+          ${fix?.fixAvailable ? `<span style="color: #2e7d32;">🔧 Fix Available: ${escapeHtml(fix.recommendedVersion)}</span>` : ''}
         </div>
 
-        <div class="summary-text">${result.summary}</div>
+        <div class="summary-text">${escapeHtml(result.summary)}</div>
 
         ${result.references.length > 0 ? `
           <div class="references">
             <strong>References:</strong>
-            ${result.references.slice(0, 3).map(ref => `<a href="${ref}" target="_blank">${ref}</a>`).join('')}
+            ${result.references.filter(safeUrl).slice(0, 3).map(ref => `<a href="${escapeHtml(ref)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ref)}</a>`).join('')}
           </div>
         ` : ''}
       </div>
@@ -820,10 +830,10 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
       }, {} as Record<string, typeof skippedResults>)
     ).map(([pkg, vulns]) => `
           <div class="skipped-package">
-            <h3><code>${pkg}</code> - ${vulns.length} vulnerabilities skipped</h3>
+            <h3><code>${escapeHtml(pkg)}</code> - ${vulns.length} vulnerabilities skipped</h3>
             ${vulns.map(v => `
               <div class="skipped-vuln">
-                ${getSeverityIcon(v.severity)} <strong>${v.cveId}</strong> (${v.severity}): ${v.summary.substring(0, 100)}...
+                ${getSeverityIcon(v.severity)} <strong>${escapeHtml(v.cveId)}</strong> (${v.severity}): ${escapeHtml(v.summary.substring(0, 100))}...
               </div>
             `).join('')}
           </div>
@@ -834,9 +844,7 @@ function generateHTML(results: ScanResult[], config: Config, allResults: ScanRes
 </body>
 </html>`;
 
-  const filename = `${config.outputPath}bugoslav-scannerov-report-${timestamp}.html`;
-  writeFileSync(filename, html);
-  return filename;
+  return writeReport(config, 'html', html);
 }
 
 function getSeverityIcon(severity: string): string {
@@ -914,7 +922,7 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
       html += '<div class="fix-commands">';
       html += '# Run these commands to fix vulnerabilities:<br>';
       npmFixes.forEach(fix => {
-        html += `${fix.command}<br>`;
+        html += `${escapeHtml(fix.command)}<br>`;
       });
       html += '</div>';
 
@@ -922,11 +930,11 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
       html += '<tr><th>Package</th><th>Current</th><th>Recommended</th><th>CVEs</th><th>Notes</th></tr>';
       npmFixes.forEach(fix => {
         html += '<tr>';
-        html += `<td><code>${fix.package}</code></td>`;
-        html += `<td>${fix.currentVersion}</td>`;
-        html += `<td><strong>${fix.recommendedVersion}</strong></td>`;
+        html += `<td><code>${escapeHtml(fix.package)}</code></td>`;
+        html += `<td>${escapeHtml(fix.currentVersion)}</td>`;
+        html += `<td><strong>${escapeHtml(fix.recommendedVersion)}</strong></td>`;
         html += `<td>${fix.vulnerabilityCount}</td>`;
-        html += `<td><span class="fix-badge ${fix.breakingChange ? 'breaking' : 'safe'}">${fix.reason || ''}</span></td>`;
+        html += `<td><span class="fix-badge ${fix.breakingChange ? 'breaking' : 'safe'}">${escapeHtml(fix.reason)}</span></td>`;
         html += '</tr>';
       });
       html += '</table>';
@@ -937,7 +945,7 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
       html += '<div class="fix-commands">';
       html += '# Run these commands to fix vulnerabilities:<br>';
       nugetFixes.forEach(fix => {
-        html += `${fix.command}<br>`;
+        html += `${escapeHtml(fix.command)}<br>`;
       });
       html += '</div>';
 
@@ -945,11 +953,11 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
       html += '<tr><th>Package</th><th>Current</th><th>Recommended</th><th>CVEs</th><th>Notes</th></tr>';
       nugetFixes.forEach(fix => {
         html += '<tr>';
-        html += `<td><code>${fix.package}</code></td>`;
-        html += `<td>${fix.currentVersion}</td>`;
-        html += `<td><strong>${fix.recommendedVersion}</strong></td>`;
+        html += `<td><code>${escapeHtml(fix.package)}</code></td>`;
+        html += `<td>${escapeHtml(fix.currentVersion)}</td>`;
+        html += `<td><strong>${escapeHtml(fix.recommendedVersion)}</strong></td>`;
         html += `<td>${fix.vulnerabilityCount}</td>`;
-        html += `<td><span class="fix-badge ${fix.breakingChange ? 'breaking' : 'safe'}">${fix.reason || ''}</span></td>`;
+        html += `<td><span class="fix-badge ${fix.breakingChange ? 'breaking' : 'safe'}">${escapeHtml(fix.reason)}</span></td>`;
         html += '</tr>';
       });
       html += '</table>';
@@ -963,9 +971,9 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
     html += '<tr><th>Package</th><th>Current Version</th><th>Reason</th></tr>';
     notFixable.forEach(fix => {
       html += '<tr>';
-      html += `<td><code>${fix.package}</code></td>`;
-      html += `<td>${fix.currentVersion}</td>`;
-      html += `<td>${fix.reason || 'Unknown'}</td>`;
+      html += `<td><code>${escapeHtml(fix.package)}</code></td>`;
+      html += `<td>${escapeHtml(fix.currentVersion)}</td>`;
+      html += `<td>${escapeHtml(fix.reason || 'Unknown')}</td>`;
       html += '</tr>';
     });
     html += '</table>';

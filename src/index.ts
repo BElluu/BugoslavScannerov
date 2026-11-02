@@ -2,319 +2,198 @@
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { scanWithOSV, scanWithGitHub, scanWithNVD } from "./scanners.js";
-import { parseNpmDependencies, parseDotNetDependencies } from "./parsers.js";
+import { scanWithOSV } from "./osv.js";
+import { enrichResults } from "./enrich.js";
+import { dedupeDependencies, findCsprojFiles, parseDotNetDependencies, parseNpmDependencies } from "./parsers.js";
 import { generateReport } from "./reporter.js";
-import type { ScanResult, Config, Dependency } from "./types.js";
+import { calculateStats, deduplicateResults, filterSkippedPackages, shouldFail } from "./results.js";
 import { suggestFixes } from "./fix-suggester.js";
+import type { Config, Dependency, FailOn, FixSuggestion } from "./types.js";
 
-const DEFAULT_CONFIG: Config = {
-  scanType: "all",
-  sources: ["osv", "github", "nvd"],
-  outputFormat: "html",
-  outputPath: "",
-  githubToken: process.env.GITHUB_TOKEN,
-  nvdApiKey: process.env.NVD_API_KEY,
-  skipPackages: [],
-  suggestFixes: false,
-};
+const VERSION = "1.0.0";
 
-async function main() {
-  const { values, positionals } = parseArgs({
-    args: Bun.argv.slice(2),
+const FORMATS = ["markdown", "json", "html"] as const;
+const SCAN_TYPES = ["all", "fast"] as const;
+const FAIL_ON = ["none", "low", "medium", "high", "critical"] as const;
+
+class UsageError extends Error {}
+
+function oneOf<T extends string>(name: string, value: string, allowed: readonly T[]): T {
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new UsageError(`Invalid --${name} "${value}". Expected one of: ${allowed.join(", ")}.`);
+  }
+  return value as T;
+}
+
+function parseConfig(): { config: Config; projectPath: string } | undefined {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
     options: {
       path: { type: "string", short: "p", default: "." },
-      sources: { type: "string", short: "s" },
-      output: { type: "string", short: "o" },
+      output: { type: "string", short: "o", default: "bugoslav-scannerov-report" },
       format: { type: "string", short: "f", default: "html" },
+      scanType: { type: "string", short: "t", default: "all" },
       skip: { type: "string" },
       suggestFixes: { type: "boolean", default: false },
+      failOn: { type: "string", default: "low" },
+      noEnrich: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
-      scanType: { type: "string", short: "t" },
     },
-    allowPositionals: true,
   });
 
   if (values.help) {
     printHelp();
-    process.exit(0);
+    return undefined;
   }
-
-  const config: Config = {
-    ...DEFAULT_CONFIG,
-    scanType: (values.scanType as "all" | "fast") || DEFAULT_CONFIG.scanType,
-    sources: values.sources?.split(",") || DEFAULT_CONFIG.sources,
-    outputFormat: (values.format as any) || DEFAULT_CONFIG.outputFormat,
-    outputPath: values.output || DEFAULT_CONFIG.outputPath,
-    skipPackages: values.skip?.split(",").map(pkg => pkg.trim()) || DEFAULT_CONFIG.skipPackages,
-    suggestFixes: values.suggestFixes || DEFAULT_CONFIG.suggestFixes,
-  };
-
-  const projectPath = values.path || ".";
-
-  console.log("🔍 Bugoslav Skannerov v1.0.0");
-  console.log(`📁 Scanning project: ${projectPath}`);
-  console.log(`🎯 Sources: ${config.sources.join(", ")}`);
-  if (config.skipPackages.length > 0) {
-    console.log(`⏭️  Skipping packages: ${config.skipPackages.join(", ")}`);
-  }
-  console.log("");
-
-  const dependencies = await detectAndParse(projectPath, config.scanType);
-
-  if (dependencies.length === 0) {
-    console.error("❌ No dependencies found. Make sure package.json or .csproj files exist.");
-    process.exit(1);
-  }
-
-  console.log(`📦 Found ${dependencies.length} dependencies to scan\n`);
-
-  const results: ScanResult[] = [];
-
-  if (config.sources.includes("osv")) {
-    console.log("🔎 Scanning with OSV...");
-    const osvResults = await scanWithOSV(dependencies as Dependency[]);
-    results.push(...osvResults);
-    console.log(`✓ OSV scan complete: ${osvResults.length} vulnerabilities found\n`);
-  }
-
-  if (config.sources.includes("github") && config.githubToken) {
-    console.log("🔎 Scanning with GitHub Advisory...");
-    const ghResults = await scanWithGitHub(dependencies as Dependency[], config.githubToken);
-    results.push(...ghResults);
-    console.log(`✓ GitHub scan complete: ${ghResults.length} vulnerabilities found\n`);
-  } else if (config.sources.includes("github") && !config.githubToken) {
-    console.warn("⚠️  GitHub token not found. Set GITHUB_TOKEN environment variable.\n");
-  }
-
-  if (config.sources.includes("nvd")) {
-    console.log("🔎 Scanning with NVD...");
-    const nvdResults = await scanWithNVD(dependencies as Dependency[], config.nvdApiKey);
-    results.push(...nvdResults);
-    console.log(`✓ NVD scan complete: ${nvdResults.length} vulnerabilities found\n`);
-  }
-
-  const uniqueResults = deduplicateResults(results);
-  const filteredResults = filterSkippedPackages(uniqueResults, config.skipPackages);
-  const skippedCount = uniqueResults.length - filteredResults.length;
-  if (skippedCount > 0) {
-    console.log(`⏭️  Skipped ${skippedCount} vulnerabilities due to skipped packages`);
-  }
-  if (filteredResults.length > 0) {
-
-    let fixSuggestions;
-    if (config.suggestFixes && filteredResults.length > 0) {
-      console.log("🔧 Analyzing fixes...\n");
-      fixSuggestions = await suggestFixes(filteredResults as ScanResult[], dependencies as Dependency[]);
-      console.log(`✓ Found ${fixSuggestions.length} fix suggestions\n`);
-    }
-    const reportPath = await generateReport(filteredResults, config, uniqueResults, fixSuggestions);
-
-    console.log("\n" + "=".repeat(60));
-    console.log("📊 SCAN SUMMARY");
-    console.log("=".repeat(60));
-
-    const stats = calculateStats(filteredResults);
-    console.log(`Total vulnerabilities: ${filteredResults.length || 0}`);
-    console.log(`  Critical: ${stats.critical || 0}`);
-    console.log(`  High: ${stats.high || 0}`);
-    console.log(`  Medium: ${stats.medium || 0}`);
-    console.log(`  Low: ${stats.low || 0}`);
-    console.log(`\n📄 Report generated: ${reportPath}`);
-
-    if (config.suggestFixes && fixSuggestions && fixSuggestions.length > 0) {
-      console.log("\n" + "=".repeat(60));
-      console.log("🔧 FIX SUGGESTIONS");
-      console.log("=".repeat(60));
-
-      const fixableCount = fixSuggestions.filter((f: any) => f.fixAvailable).length;
-      console.log(`${fixableCount} of ${filteredResults.length} vulnerabilities can be fixed\n`);
-
-      // Group by ecosystem
-      const npmFixes = fixSuggestions.filter((f: any) => f.ecosystem === "npm" && f.fixAvailable);
-      const dotnetFixes = fixSuggestions.filter((f: any) => f.ecosystem === "nuget" && f.fixAvailable);
-
-      if (npmFixes.length > 0) {
-        console.log("📦 NPM Packages:");
-        npmFixes.slice(0, 5).forEach((fix: any) => {
-          console.log(`  ${fix.package}@${fix.currentVersion} → ${fix.recommendedVersion}`);
-          console.log(`    ${fix.command}`);
-        });
-        if (npmFixes.length > 5) {
-          console.log(`  ... and ${npmFixes.length - 5} more (see report)`);
-        }
-        console.log("");
-      }
-
-      if (dotnetFixes.length > 0) {
-        console.log("📦 .NET Packages:");
-        dotnetFixes.slice(0, 5).forEach((fix: any) => {
-          console.log(`  ${fix.package} ${fix.currentVersion} → ${fix.recommendedVersion}`);
-          console.log(`    ${fix.command}`);
-        });
-        if (dotnetFixes.length > 5) {
-          console.log(`  ... and ${dotnetFixes.length - 5} more (see report)`);
-        }
-        console.log("");
-      }
-
-      console.log("💡 Run these commands to fix vulnerabilities");
-      console.log("   Full fix script available in the report");
-    }
-  }
-
-  if (uniqueResults.length > 0) {
-    console.log("\n❌ Build failed due to vulnerabilities matching fail criteria");
-    process.exit(1);
-  } else {
-    console.log("\n✅ No critical vulnerabilities found");
-    process.exit(0);
-  }
-}
-
-async function detectAndParse(projectPath: string, scanType: "all" | "fast") {
-  const dependencies: Array<{ name: string; version: string; ecosystem: string }> = [];
-
-  // Check for npm/node project
-  const packageJsonPath = join(projectPath, "package.json");
-  if (existsSync(packageJsonPath)) {
-    console.log("📦 Detected npm project");
-    const npmDeps = await parseNpmDependencies(projectPath, scanType);
-    dependencies.push(...npmDeps);
-  }
-
-  // Check for .NET project
-  const csprojFiles = new Bun.Glob("**/*.csproj").scanSync({ cwd: projectPath });
-  for (const csproj of csprojFiles) {
-    console.log(`📦 Detected .NET project: ${csproj}`);
-    const dotnetDeps = await parseDotNetDependencies(join(projectPath, csproj));
-    dependencies.push(...dotnetDeps);
-  }
-
-  return dependencies;
-}
-
-function deduplicateResults(results: ScanResult[]): ScanResult[] {
-  const seen = new Map<string, ScanResult>();
-
-  for (const result of results) {
-    const key = `${result.package}:${result.cveId}`;
-    const existing = seen.get(key);
-
-    if (!existing || severityWeight(result.severity) > severityWeight(existing.severity)) {
-      seen.set(key, result);
-    }
-  }
-
-  for (const [key, result] of seen.entries()) {
-    if ((result.severity === "unknown" || result.severity === "moderate") && result.cvssScore) {
-      result.severity = calculateSeverityWeight(result.cvssScore) as "critical" | "high" | "medium" | "low" | "moderate" | "unknown";
-    }
-  }
-
-  let deduplicatedResultList = Array.from(seen.values()).sort((a, b) =>
-    severityWeight(b.severity) - severityWeight(a.severity)
-  );
-
-  // Filter out vulnerabilities where current version is >= fixed version
-  return deduplicatedResultList.filter(result => {
-    if (!result.fixedVersion) return true; // No fix version specified, keep it
-
-    // Use semantic version comparison
-    const currentVersion = parseVersion(result.version);
-    const fixedVersion = parseVersion(result.fixedVersion);
-
-    if (!currentVersion || !fixedVersion) {
-      // If we can't parse versions, keep the vulnerability to be safe
-      return true;
-    }
-
-    // Keep only if current version is less than fixed version
-    return isVersionLessThan(currentVersion, fixedVersion);
-  });
-}
-
-function parseVersion(version: string): { major: number; minor: number; patch: number } | null {
-  const cleaned = version.replace(/^[v^~>=<]/, "");
-  const parts = cleaned.split(".").map(p => parseInt(p.split("-")[0], 10));
-
-  if (parts.length < 2 || parts.some(isNaN)) return null;
 
   return {
-    major: parts[0] || 0,
-    minor: parts[1] || 0,
-    patch: parts[2] || 0,
+    projectPath: values.path!,
+    config: {
+      scanType: oneOf("scanType", values.scanType!, SCAN_TYPES),
+      outputFormat: oneOf("format", values.format!, FORMATS),
+      outputPath: values.output!,
+      skipPackages: values.skip?.split(",").map(p => p.trim()).filter(Boolean) ?? [],
+      suggestFixes: values.suggestFixes!,
+      failOn: oneOf("failOn", values.failOn!, FAIL_ON) as FailOn,
+      enrich: !values.noEnrich,
+    },
   };
 }
 
-function isVersionLessThan(current: { major: number; minor: number; patch: number }, target: { major: number; minor: number; patch: number }): boolean {
-  if (current.major !== target.major) {
-    return current.major < target.major;
+async function main(): Promise<number> {
+  const parsed = parseConfig();
+  if (!parsed) return 0;
+  const { config, projectPath } = parsed;
+
+  if (!existsSync(projectPath)) throw new UsageError(`Path does not exist: ${projectPath}`);
+
+  console.log(`🔍 Bugoslav Scannerov v${VERSION}`);
+  console.log(`📁 Scanning project: ${projectPath}`);
+  if (config.skipPackages.length > 0) console.log(`⏭️  Skipping packages: ${config.skipPackages.join(", ")}`);
+  console.log("");
+
+  const dependencies = detectAndParse(projectPath, config.scanType);
+  if (dependencies.length === 0) {
+    throw new UsageError("No dependencies found. Make sure package.json or .csproj files exist.");
   }
-  if (current.minor !== target.minor) {
-    return current.minor < target.minor;
+  console.log(`📦 Found ${dependencies.length} dependencies to scan\n`);
+
+  console.log("🔎 Scanning with OSV...");
+  const found = await scanWithOSV(dependencies);
+  console.log(`✓ OSV scan complete: ${found.length} advisories matched\n`);
+
+  const unique = deduplicateResults(found);
+  if (config.enrich) {
+    console.log("🔎 Enriching with CISA KEV and EPSS...");
+    await enrichResults(unique);
   }
-  return current.patch < target.patch;
+  const results = deduplicateResults(filterSkippedPackages(unique, config.skipPackages));
+  const skipped = unique.length - results.length;
+  if (skipped > 0) console.log(`⏭️  Skipped ${skipped} vulnerabilities due to skipped packages`);
+
+  let fixSuggestions: FixSuggestion[] | undefined;
+  if (config.suggestFixes && results.length > 0) {
+    console.log("🔧 Analyzing fixes...\n");
+    fixSuggestions = await suggestFixes(results);
+    console.log(`✓ Found ${fixSuggestions.length} fix suggestions\n`);
+  }
+
+  const reportPath = await generateReport(results, config, unique, fixSuggestions);
+  printSummary(results, reportPath, fixSuggestions);
+
+  if (shouldFail(results, config.failOn)) {
+    console.log(`\n❌ Vulnerabilities at or above "${config.failOn}" severity found`);
+    return 1;
+  }
+  console.log(results.length > 0 ? `\n✅ No vulnerabilities at or above "${config.failOn}" severity` : "\n✅ No vulnerabilities found");
+  return 0;
 }
 
-function severityWeight(severity: string): number {
-  const weights: Record<string, number> = {
-    critical: 4,
-    high: 3,
-    medium: 2,
-    low: 1,
-    unknown: 0,
-  };
-  return weights[severity.toLowerCase()] || 0;
+function detectAndParse(projectPath: string, scanType: Config["scanType"]): Dependency[] {
+  const dependencies: Dependency[] = [];
+
+  if (existsSync(join(projectPath, "package.json"))) {
+    console.log("📦 Detected npm project");
+    dependencies.push(...parseNpmDependencies(projectPath, scanType));
+  }
+
+  for (const csproj of findCsprojFiles(projectPath)) {
+    console.log(`📦 Detected .NET project: ${csproj}`);
+    dependencies.push(...parseDotNetDependencies(csproj, scanType));
+  }
+
+  return dedupeDependencies(dependencies);
 }
 
-function calculateSeverityWeight(cvssScore: number): string {
-  if (cvssScore >= 9.0) return "critical";
-  if (cvssScore >= 7.0) return "high";
-  if (cvssScore >= 4.0) return "medium";
-  return "low";
-}
+function printSummary(
+  results: ReturnType<typeof deduplicateResults>,
+  reportPath: string,
+  fixSuggestions?: FixSuggestion[]
+) {
+  const stats = calculateStats(results);
+  const exploited = results.filter(r => r.knownExploited).length;
 
-function calculateStats(results: ScanResult[]) {
-  return results.reduce((acc, r) => {
-    const sev = r.severity.toLowerCase();
-    acc[sev] = (acc[sev] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-}
+  console.log("=".repeat(60));
+  console.log("📊 SCAN SUMMARY");
+  console.log("=".repeat(60));
+  console.log(`Total vulnerabilities: ${results.length}`);
+  console.log(`  Critical: ${stats.critical}`);
+  console.log(`  High: ${stats.high}`);
+  console.log(`  Medium: ${stats.medium}`);
+  console.log(`  Low: ${stats.low}`);
+  if (stats.unknown > 0) console.log(`  Unknown: ${stats.unknown}`);
+  if (exploited > 0) console.log(`  🔥 Known exploited (CISA KEV): ${exploited}`);
+  console.log(`\n📄 Report generated: ${reportPath}`);
 
-function filterSkippedPackages(results: ScanResult[], skipPackages: string[]): ScanResult[] {
-  if (skipPackages.length === 0) return results;
+  const fixable = fixSuggestions?.filter(f => f.fixAvailable) ?? [];
+  if (fixable.length === 0) return;
 
-  const skipSet = new Set(skipPackages.map(p => p.toLowerCase()));
-  return results.filter(result => !skipSet.has(result.package.toLowerCase()));
+  console.log("\n" + "=".repeat(60));
+  console.log("🔧 FIX SUGGESTIONS");
+  console.log("=".repeat(60));
+  console.log(`${fixable.length} of ${fixSuggestions!.length} vulnerable packages can be fixed\n`);
+  for (const [label, ecosystem] of [["📦 NPM Packages:", "npm"], ["📦 .NET Packages:", "nuget"]] as const) {
+    const fixes = fixable.filter(f => f.ecosystem === ecosystem);
+    if (fixes.length === 0) continue;
+    console.log(label);
+    for (const fix of fixes.slice(0, 5)) {
+      console.log(`  ${fix.package} ${fix.currentVersion} → ${fix.recommendedVersion}`);
+      console.log(`    ${fix.command}`);
+    }
+    if (fixes.length > 5) console.log(`  ... and ${fixes.length - 5} more (see report)`);
+    console.log("");
+  }
 }
 
 function printHelp() {
   console.log(`
-Bugoslav Skannerov CLI
+Bugoslav Scannerov v${VERSION}
 
 Usage: bun run scan [options]
 
 Options:
   -p, --path <path>        Project path to scan (default: current directory)
-  -t, --scanType <type>    Scan type: all, fast. all scans all dependencies, fast scans only direct dependencies (default: all)
-  -s, --sources <sources>  Comma-separated sources: osv,github,nvd (default: all)
-  -o, --output <path>      Output file path (default: bugoslav-scannerov-report)
-  -f <format>              Output format: markdown, json, html (default: html)
-  --skip <packages>        Comma-separated packages to skip (default: none)
-  --suggestFixes           Suggest fixes for vulnerabilities (default: false)
+  -t, --scanType <type>    all | fast. all scans transitive dependencies too, fast only direct ones (default: all)
+  -o, --output <path>      Report path without extension (default: bugoslav-scannerov-report)
+  -f, --format <format>    markdown | json | html (default: html)
+      --skip <packages>    Comma-separated package names to skip
+      --suggestFixes       Suggest fixes for vulnerabilities
+      --failOn <severity>  Exit with code 1 at or above: none | low | medium | high | critical (default: low)
+      --noEnrich           Do not query CISA KEV and EPSS
   -h, --help               Show this help message
 
-Environment Variables:
-  GITHUB_TOKEN            GitHub personal access token (for GitHub Advisory)
-  NVD_API_KEY            NVD API key (optional, increases rate limits)
+Exit codes: 0 = pass, 1 = vulnerabilities at or above --failOn, 2 = error.
 
 Examples:
   bun run scan
-  bun run scan --path ./my-project --scanType fast
-  bun run scan --sources osv,github --format json
+  bun run scan --path ./my-project --scanType fast --failOn high
+  bun run scan --format json --output report
   `);
 }
 
-main().catch(console.error);
+main()
+  .then(code => process.exit(code))
+  .catch(error => {
+    console.error(`\n❌ ${error instanceof UsageError ? error.message : `Scan failed: ${error instanceof Error ? error.message : error}`}`);
+    process.exit(2);
+  });
