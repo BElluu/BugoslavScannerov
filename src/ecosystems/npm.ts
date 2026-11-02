@@ -1,8 +1,9 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import type { Dependency, EcosystemDefinition, ScanType } from "../types.js";
-import { dedupeDependencies, readJson, withManifest } from "../files.js";
+import { dedupeDependencies, findFiles, readJson, withManifest } from "../files.js";
 import { fetchJson } from "../utils.js";
+import { parseBunLock, parsePnpmLock, parseYarnLock, type DeclaredDeps } from "./npm-lockfiles.js";
 
 /**
  * Reduces a package.json version spec to a concrete version. Only single-comparator specs
@@ -18,32 +19,93 @@ export function resolveNpmSpec(spec: string): string | undefined {
   return parts.join(".") + (pre.length ? `-${pre.join("-")}` : "");
 }
 
-export function parseNpmDependencies(projectPath: string, scanType: ScanType): Dependency[] {
-  const packagePath = join(projectPath, "package.json");
-  const lockPath = join(projectPath, "package-lock.json");
-  const manifest = existsSync(packagePath) ? readJson(packagePath) : {};
-  const declared: Record<string, string> = {
-    ...manifest.dependencies,
-    ...manifest.devDependencies,
-    ...manifest.optionalDependencies,
-  };
-  const directNames = Object.keys(declared);
+/** Lockfiles in order of preference when one directory holds several. */
+const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"];
 
-  if (existsSync(lockPath)) {
+function readDeclared(manifestPaths: string[]): DeclaredDeps {
+  const declared: DeclaredDeps = new Map();
+  for (const path of manifestPaths) {
+    const manifest = readJson(path);
+    for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
+      for (const [name, spec] of Object.entries<unknown>(manifest[field] ?? {})) {
+        if (typeof spec === "string") declared.set(name, (declared.get(name) ?? new Set()).add(spec));
+      }
+    }
+  }
+  return declared;
+}
+
+function readLockfile(lockPath: string, declared: DeclaredDeps, scanType: ScanType): Dependency[] {
+  const fast = scanType === "fast";
+  const name = basename(lockPath);
+  if (name === "package-lock.json") {
     const lock = readJson(lockPath);
-    const only = scanType === "fast" ? directNames : undefined;
-    const deps = lock.packages ? npmFromLockV2(lock.packages, only) : npmFromLockV1(lock.dependencies ?? {}, only);
-    return dedupeDependencies(deps);
+    const only = fast ? [...declared.keys()] : undefined;
+    return lock.packages ? npmFromLockV2(lock.packages, only) : npmFromLockV1(lock.dependencies ?? {}, only);
+  }
+  const content = readFileSync(lockPath, "utf-8");
+  if (name === "pnpm-lock.yaml") return parsePnpmLock(content, fast);
+  if (name === "yarn.lock") return parseYarnLock(content, fast ? declared : undefined);
+  return parseBunLock(content, fast);
+}
+
+/**
+ * Finds every package.json below `projectPath` and reads the dependencies from the nearest lockfile
+ * (package-lock.json, pnpm-lock.yaml, yarn.lock or bun.lock) in the same or a parent directory, so workspace
+ * members are covered by their monorepo's lockfile. Packages without a lockfile fall back to their declared ranges.
+ */
+export function parseNpmDependencies(projectPath: string, scanType: ScanType): Dependency[] {
+  const root = resolve(projectPath);
+  const files = findFiles(root, name => name === "package.json" || name === "bun.lockb" || LOCKFILES.includes(name));
+  const manifests = files.filter(f => basename(f) === "package.json");
+  const binaryBunDirs = new Set(files.filter(f => basename(f) === "bun.lockb").map(f => dirname(f)));
+
+  const lockByDir = new Map<string, string>();
+  for (const name of LOCKFILES) {
+    for (const file of files.filter(f => basename(f) === name)) {
+      if (!lockByDir.has(dirname(file))) lockByDir.set(dirname(file), file);
+    }
+  }
+  const nearestLock = (dir: string): string | undefined => {
+    for (let d = dir; ; d = dirname(d)) {
+      const lock = lockByDir.get(d);
+      if (lock) return lock;
+      if (d === root || dirname(d) === d) return undefined;
+    }
+  };
+
+  const membersByLock = new Map<string, string[]>([...lockByDir.values()].map(lock => [lock, []]));
+  const unlocked: string[] = [];
+  for (const manifest of manifests) {
+    const lock = nearestLock(dirname(manifest));
+    if (lock) membersByLock.get(lock)!.push(manifest);
+    else unlocked.push(manifest);
   }
 
-  if (scanType === "all") {
-    console.warn("⚠️  No package-lock.json found: scanning only direct dependencies from package.json.");
-  }
   const deps: Dependency[] = [];
-  for (const [name, spec] of Object.entries(declared)) {
-    const version = resolveNpmSpec(spec);
-    if (version) deps.push({ name, version, ecosystem: "npm" });
-    else console.warn(`⚠️  Skipping ${name}@${spec}: cannot resolve to a concrete version without a lockfile.`);
+  for (const [lock, members] of membersByLock) {
+    console.log(`📦 Detected npm lockfile: ${lock}`);
+    deps.push(...withManifest(readLockfile(lock, readDeclared(members), scanType), root, lock));
+  }
+
+  for (const manifest of unlocked) {
+    const declared = readDeclared([manifest]);
+    if (declared.size === 0) continue;
+    console.log(`📦 Detected npm project without lockfile: ${manifest}`);
+    if (scanType === "all") {
+      const where = relative(root, dirname(manifest)).split(sep).join("/") || ".";
+      const hint = binaryBunDirs.has(dirname(manifest)) ? " (bun.lockb is binary; `bun install --save-text-lockfile` creates bun.lock)" : "";
+      console.warn(`⚠️  No lockfile found for ${where}: scanning only direct dependencies from package.json${hint}.`);
+    }
+    const found: Dependency[] = [];
+    for (const [name, specs] of declared) {
+      for (const spec of specs) {
+        const version = resolveNpmSpec(spec);
+        if (version) found.push({ name, version, ecosystem: "npm" });
+        else console.warn(`⚠️  Skipping ${name}@${spec}: cannot resolve to a concrete version without a lockfile.`);
+      }
+    }
+    deps.push(...withManifest(found, root, manifest));
   }
   return dedupeDependencies(deps);
 }
@@ -51,12 +113,15 @@ export function parseNpmDependencies(projectPath: string, scanType: ScanType): D
 function npmFromLockV2(packages: Record<string, any>, onlyNames?: string[]): Dependency[] {
   const only = onlyNames ? new Set(onlyNames) : undefined;
   const deps: Dependency[] = [];
+  const marker = "node_modules/";
   for (const [path, pkg] of Object.entries(packages)) {
     // Workspace packages and symlinks are not installed from the registry.
-    if (path === "" || pkg.link || !path.includes("node_modules/") || !pkg.version) continue;
-    const name: string = pkg.name ?? path.slice(path.lastIndexOf("node_modules/") + "node_modules/".length);
-    if (only && !(path === `node_modules/${name}` && only.has(name))) continue;
-    deps.push({ name, version: pkg.version, ecosystem: "npm" });
+    if (path === "" || pkg.link || !path.includes(marker) || !pkg.version) continue;
+    const at = path.lastIndexOf(marker);
+    const pathName = path.slice(at + marker.length);
+    // Direct dependencies sit in the root node_modules or in a workspace member's own node_modules.
+    if (only && !(only.has(pathName) && !path.slice(0, at).includes(marker))) continue;
+    deps.push({ name: pkg.name ?? pathName, version: pkg.version, ecosystem: "npm" });
   }
   return deps;
 }
@@ -83,13 +148,7 @@ export const npm: EcosystemDefinition = {
   normalizeName: name => name.toLowerCase(),
   // Scoped names keep the "/" and encode the "@": pkg:npm/%40scope/name@1.0.0
   purl: (name, version) => `pkg:npm/${name.split("/").map(encodeURIComponent).join("/")}@${encodeURIComponent(version)}`,
-  detect(projectPath, scanType) {
-    if (!existsSync(join(projectPath, "package.json"))) return [];
-    console.log("📦 Detected npm project");
-    const lock = join(projectPath, "package-lock.json");
-    const manifest = existsSync(lock) ? lock : join(projectPath, "package.json");
-    return withManifest(parseNpmDependencies(projectPath, scanType), projectPath, manifest);
-  },
+  detect: parseNpmDependencies,
   registry: {
     async versions(name) {
       // The abbreviated document is much smaller than the full packument.

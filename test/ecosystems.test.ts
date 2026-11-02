@@ -57,7 +57,7 @@ describe("npm", () => {
   test("without a lockfile falls back to package.json and skips unresolvable specs", () => {
     const dir = tmp();
     write(dir, "package.json", { dependencies: { a: "^1.2.0", b: "latest" } });
-    expect(parseNpmDependencies(dir, "fast")).toEqual([{ name: "a", version: "1.2.0", ecosystem: "npm" }]);
+    expect(parseNpmDependencies(dir, "fast")).toEqual([{ name: "a", version: "1.2.0", ecosystem: "npm", manifest: "package.json" }]);
   });
 });
 

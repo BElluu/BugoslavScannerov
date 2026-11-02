@@ -51,13 +51,15 @@ bugoslav --scanType fast --suggestFixes
 
 | Ecosystem | Files read | Transitive dependencies |
 |-----------|-----------|-------------------------|
-| **npm** (JS/TS) | `package.json`, `package-lock.json` (v1, v2, v3) | via `package-lock.json` |
+| **npm** (JS/TS) | `package.json`, `package-lock.json` (v1, v2, v3), `pnpm-lock.yaml` (v5 to v9), `yarn.lock` (classic and Berry), `bun.lock` | via the lockfile |
 | **NuGet** (.NET) | `*.csproj`, `packages.lock.json`, `Directory.Packages.props` | via `packages.lock.json` |
 | **PyPI** (Python) | `requirements*.txt` (exact `==` pins), `poetry.lock`, `uv.lock`, `Pipfile.lock` | lockfiles |
 | **Go** | `go.mod` | all `require` entries; `// indirect` ones are skipped with `--scanType fast` |
 | **crates.io** (Rust) | `Cargo.lock` | lockfile |
 
-Manifests are searched recursively (except in `node_modules`, `bin`, `obj`, `.git`, virtual environments, `target` and `vendor`), except npm, which reads the project root only. Lockfiles for Python and Rust do not mark direct dependencies, so `--scanType` does not apply to them.
+Manifests are searched recursively (except in `node_modules`, `bin`, `obj`, `.git`, virtual environments, `target` and `vendor`). Lockfiles for Python and Rust do not mark direct dependencies, so `--scanType` does not apply to them.
+
+**npm monorepos:** every `package.json` is matched with the nearest lockfile in the same or a parent folder, so workspace members are covered by the root lockfile (npm, pnpm, Yarn and Bun workspaces). If a folder holds several lockfiles, the first of `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock` is used. Binary `bun.lockb` is not readable; run `bun install --save-text-lockfile` to create `bun.lock`. Git, file, link and workspace dependencies are skipped. Fix commands for npm are always `npm install pkg@x`.
 
 Adding an ecosystem is one file in `src/ecosystems/` plus one line in `src/ecosystems/index.ts`: OSV already covers Maven, RubyGems, Packagist and more.
 
@@ -88,7 +90,7 @@ A scan that cannot reach OSV fails with code `2` rather than reporting a clean r
 
 ### Scan type: `all` vs `fast`
 
-- **`all`**: every dependency, including transitive ones. This needs a lockfile: `package-lock.json` for npm, `packages.lock.json` for .NET (`<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>`). Without one only direct dependencies are scanned and a warning is shown.
+- **`all`**: every dependency, including transitive ones. This needs a lockfile: a lockfile for npm (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` or `bun.lock`), `packages.lock.json` for .NET (`<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>`). Without one only direct dependencies are scanned and a warning is shown.
 - **`fast`**: direct dependencies only. With a lockfile the exact installed versions are used; without one, version ranges in `package.json` are resolved to their lower bound.
 
 ### Fix suggestions (`--suggestFixes`)
@@ -184,7 +186,7 @@ KEV and EPSS are advisory: if they are unavailable the scan continues without th
 src/
 ├── index.ts          # CLI entry point
 ├── types.ts          # Shared types
-├── ecosystems/       # One file per ecosystem: manifest parsing, OSV name, package registry
+├── ecosystems/       # One file per ecosystem: manifest parsing, OSV name, package registry (npm-lockfiles.ts: pnpm, Yarn, Bun)
 ├── files.ts          # Recursive file search, TOML lockfile reader
 ├── osv.ts            # OSV client and advisory conversion
 ├── enrich.ts         # CISA KEV and EPSS
