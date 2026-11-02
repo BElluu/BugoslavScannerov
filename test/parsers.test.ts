@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  findCsprojFiles,
   parseCsprojPackageReferences,
   parseDotNetDependencies,
   parseNpmDependencies,
@@ -62,6 +63,17 @@ describe("npm", () => {
     const dir = tmp();
     write(dir, "package.json", { dependencies: { a: "^1.2.0", b: "latest" } });
     expect(parseNpmDependencies(dir, "fast")).toEqual([{ name: "a", version: "1.2.0", ecosystem: "npm" }]);
+  });
+});
+
+describe("findCsprojFiles", () => {
+  test("finds projects in subfolders and ignores node_modules, bin and obj", () => {
+    const dir = tmp();
+    for (const sub of ["src/App", "node_modules/x", "src/App/bin", "obj"]) mkdirSync(join(dir, sub), { recursive: true });
+    for (const file of ["src/App/App.csproj", "node_modules/x/X.csproj", "src/App/bin/B.csproj", "obj/O.csproj"]) {
+      write(dir, file, "<Project/>");
+    }
+    expect(findCsprojFiles(dir)).toEqual([join(dir, "src/App/App.csproj")]);
   });
 });
 

@@ -15,25 +15,36 @@ CLI tool for scanning vulnerabilities in **.NET** and **TypeScript/JavaScript** 
 
 ## 🚀 Installation
 
-Requires [Bun](https://bun.sh/).
+Requires Node.js 20+ (or [Bun](https://bun.sh/)).
+
+```bash
+# Run without installing
+npx bugoslav-scannerov --path ./my-project
+
+# Or install globally; the command is `bugoslav`
+npm install -g bugoslav-scannerov
+```
+
+From source (needs [Bun](https://bun.sh/)):
 
 ```bash
 git clone https://github.com/BElluu/BugoslavScannerov.git
 cd BugoslavScannerov
 bun install
+bun run scan --path ./my-project
 ```
 
 ## 📖 Usage
 
 ```bash
 # Scan the current directory, write bugoslav-scannerov-report.html
-bun run scan
+bugoslav
 
-# Scan another project, JSON report, fail the build only on high/critical findings
-bun run scan --path ./my-project --format json --output security-report --failOn high
+# Another project, JSON report, fail the build only on high/critical findings
+bugoslav --path ./my-project --format json --output security-report --failOn high
 
 # Direct dependencies only, with fix suggestions
-bun run scan --scanType fast --suggestFixes
+bugoslav --scanType fast --suggestFixes
 ```
 
 ## 🔧 CLI Options
@@ -107,6 +118,7 @@ test/                 # bun test
 ```bash
 bun test
 bun run typecheck
+bun run build   # bundles to dist/ for Node
 ```
 
 ## 📄 License
