@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { scanWithOSV } from "./osv.js";
 import { enrichResults } from "./enrich.js";
 import { ECOSYSTEMS } from "./ecosystems/index.js";
@@ -16,7 +17,7 @@ import pkg from "../package.json" with { type: "json" };
 
 const VERSION = pkg.version;
 
-const FORMATS = ["markdown", "json", "html", "sarif"] as const;
+const FORMATS = ["markdown", "json", "html", "sarif", "cyclonedx"] as const;
 const SCAN_TYPES = ["all", "fast"] as const;
 const FAIL_ON = ["none", "low", "medium", "high", "critical"] as const;
 
@@ -109,7 +110,10 @@ async function main(): Promise<number> {
     console.log(`✓ Found ${fixSuggestions.length} fix suggestions\n`);
   }
 
-  const reportPath = await generateReport(results, config, unique, fixSuggestions);
+  const reportPath = await generateReport(results, config, unique, fixSuggestions, {
+    dependencies,
+    projectName: basename(resolve(projectPath)),
+  });
   printSummary(results, reportPath, fixSuggestions);
 
   if (shouldFail(results, config.failOn)) {
@@ -174,7 +178,7 @@ Options:
   -p, --path <path>        Project path to scan (default: current directory)
   -t, --scanType <type>    all | fast. all scans transitive dependencies too, fast only direct ones (default: all)
   -o, --output <path>      Report path without extension (default: bugoslav-scannerov-report)
-  -f, --format <format>    markdown | json | html | sarif (default: html)
+  -f, --format <format>    markdown | json | html | sarif | cyclonedx (default: html)
       --skip <packages>    Comma-separated package names to skip
       --suggestFixes       Suggest fixes for vulnerabilities
       --failOn <severity>  Exit with code 1 at or above: none | low | medium | high | critical (default: low)

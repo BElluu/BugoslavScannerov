@@ -16,6 +16,7 @@ export const cargo: EcosystemDefinition = {
   label: "Rust Crates",
   osvName: "crates.io",
   normalizeName: name => name.toLowerCase(),
+  purl: (name, version) => `pkg:cargo/${encodeURIComponent(name)}@${encodeURIComponent(version)}`,
   // Cargo.lock does not distinguish direct from transitive dependencies, so --scanType has no effect here.
   detect(projectPath) {
     return dedupeDependencies(

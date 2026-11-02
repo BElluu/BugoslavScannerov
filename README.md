@@ -8,7 +8,7 @@ CLI tool for scanning vulnerabilities in **JavaScript/TypeScript, .NET, Python, 
 - ⚡ Fast: one batched OSV query, no API keys or tokens needed
 - 🎯 Accurate: severity from the CVSS vector, the fix version taken from the advisory range that matches your installed version, withdrawn advisories ignored
 - 🔥 Prioritisation: flags vulnerabilities listed in CISA's Known Exploited Vulnerabilities catalog and shows the EPSS exploit probability
-- 📄 Reports: **Markdown**, **JSON**, **HTML** and **SARIF** (GitHub Code Scanning)
+- 📄 Reports: **Markdown**, **JSON**, **HTML**, **SARIF** (GitHub Code Scanning) and a **CycloneDX 1.5 SBOM**
 - 🙈 Accepted risks: ignore rules with a mandatory reason and optional expiry date
 - 🚦 CI-ready: configurable failure threshold (`--failOn`) and meaningful exit codes
 - 🔧 Optional fix suggestions with ready-to-run update commands
@@ -68,7 +68,7 @@ Adding an ecosystem is one file in `src/ecosystems/` plus one line in `src/ecosy
 | `--path` | `-p` | Project path to scan | `.` |
 | `--scanType` | `-t` | `all` (including transitive dependencies) or `fast` (direct only) | `all` |
 | `--output` | `-o` | Report path **without extension**; the format's extension is added | `bugoslav-scannerov-report` |
-| `--format` | `-f` | `markdown`, `json`, `html` or `sarif` | `html` |
+| `--format` | `-f` | `markdown`, `json`, `html`, `sarif` or `cyclonedx` | `html` |
 | `--skip` | | Comma-separated package names to skip (case-insensitive) | none |
 | `--suggestFixes` | | Suggest fixes using the package registries | `false` |
 | `--failOn` | | Exit with code 1 at or above this severity: `none`, `low`, `medium`, `high`, `critical` | `low` |
@@ -154,6 +154,19 @@ jobs:
 
 `--failOn none` lets the upload step decide; use a different threshold if the job itself should fail.
 
+## 📋 SBOM (CycloneDX)
+
+`--format cyclonedx` writes a [CycloneDX 1.5](https://cyclonedx.org/) JSON bill of materials to `<output>.cdx.json`:
+
+```bash
+bugoslav --format cyclonedx --output sbom
+```
+
+- **Components:** every scanned dependency, vulnerable or not, identified by [package URL](https://github.com/package-url/purl-spec) and with the manifest that declares it (`evidence.occurrences`).
+- **Vulnerabilities:** one entry per advisory with severity, CVSS score, recommended upgrade and the components it affects. CISA KEV and EPSS appear as properties. Ignored findings are left out.
+- The component list reflects what was scanned: with `--scanType fast`, or without lockfiles, transitive dependencies are not included.
+- The dependency graph (`dependencies`) is not emitted, because the scanner does not track which package requires which.
+
 ## 📊 Data sources
 
 | Source | Used for | Notes |
@@ -177,11 +190,12 @@ src/
 ├── enrich.ts         # CISA KEV and EPSS
 ├── config.ts         # .bugoslavrc.json ignore rules
 ├── sarif.ts          # SARIF 2.1.0 output
+├── cyclonedx.ts      # CycloneDX 1.5 SBOM
 ├── version.ts        # Version comparison and OSV range matching
 ├── cvss.ts           # CVSS v3 base score
 ├── results.ts        # Deduplication, sorting, fail threshold
 ├── fix-suggester.ts  # Fix suggestions
-├── reporter.ts       # Markdown / JSON / HTML / SARIF reports
+├── reporter.ts       # Markdown / JSON / HTML / SARIF / CycloneDX output
 └── utils.ts
 test/                 # bun test
 ```

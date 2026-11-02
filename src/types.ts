@@ -17,6 +17,8 @@ export interface EcosystemDefinition {
   osvName: string;
   /** Canonical form of a package name, used to match OSV data against ours. */
   normalizeName(name: string): string;
+  /** Package URL (https://github.com/package-url/purl-spec) identifying a package version. */
+  purl(name: string, version: string): string;
   /** Finds this ecosystem's manifests below `projectPath` and returns the dependencies; [] if there are none. */
   detect(projectPath: string, scanType: ScanType): Dependency[];
   registry: Registry;
@@ -57,7 +59,7 @@ export interface ScanResult {
 
 export interface Config {
   scanType: ScanType;
-  outputFormat: "markdown" | "json" | "html" | "sarif";
+  outputFormat: "markdown" | "json" | "html" | "sarif" | "cyclonedx";
   outputPath: string;
   skipPackages: string[];
   suggestFixes: boolean;

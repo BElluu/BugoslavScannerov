@@ -82,6 +82,7 @@ export const nuget: EcosystemDefinition = {
   label: ".NET Packages",
   osvName: "NuGet",
   normalizeName: name => name.toLowerCase(),
+  purl: (name, version) => `pkg:nuget/${encodeURIComponent(name)}@${encodeURIComponent(version)}`,
   detect(projectPath, scanType) {
     return findFiles(projectPath, name => name.toLowerCase().endsWith(".csproj")).flatMap(csproj => {
       console.log(`📦 Detected .NET project: ${csproj}`);

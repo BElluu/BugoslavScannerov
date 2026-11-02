@@ -81,6 +81,8 @@ export const npm: EcosystemDefinition = {
   label: "NPM Packages",
   osvName: "npm",
   normalizeName: name => name.toLowerCase(),
+  // Scoped names keep the "/" and encode the "@": pkg:npm/%40scope/name@1.0.0
+  purl: (name, version) => `pkg:npm/${name.split("/").map(encodeURIComponent).join("/")}@${encodeURIComponent(version)}`,
   detect(projectPath, scanType) {
     if (!existsSync(join(projectPath, "package.json"))) return [];
     console.log("📦 Detected npm project");

@@ -1,20 +1,38 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Config, FixSuggestion, ScanResult } from './types.js';
+import type { Config, Dependency, FixSuggestion, ScanResult } from './types.js';
 import { escapeHtml, safeUrl } from './utils.js';
 import { ECOSYSTEMS } from './ecosystems/index.js';
 import { toSarif } from './sarif.js';
+import { toCycloneDx } from './cyclonedx.js';
 import pkg from '../package.json' with { type: 'json' };
+
+/** What was scanned; the SBOM lists every dependency, not just the vulnerable ones. */
+export interface ScanContext {
+  dependencies: Dependency[];
+  projectName: string;
+}
 
 export async function generateReport(
   results: ScanResult[],
   config: Config,
   allResults?: ScanResult[],
-  fixSuggestions?: FixSuggestion[]
+  fixSuggestions?: FixSuggestion[],
+  scan?: ScanContext
 ): Promise<string> {
   const timestamp = new Date().toISOString();
 
   switch (config.outputFormat) {
+    case 'cyclonedx':
+      return writeReport(
+        config,
+        'cdx.json',
+        JSON.stringify(
+          toCycloneDx(scan?.dependencies ?? [], results, { toolVersion: pkg.version, projectName: scan?.projectName ?? 'project' }),
+          null,
+          2
+        )
+      );
     case 'json':
       return generateJSON(results, config, allResults, fixSuggestions, timestamp);
     case 'sarif':

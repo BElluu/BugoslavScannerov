@@ -68,6 +68,7 @@ export const pypi: EcosystemDefinition = {
   label: "Python Packages",
   osvName: "PyPI",
   normalizeName: normalizePyPIName,
+  purl: (name, version) => `pkg:pypi/${encodeURIComponent(normalizePyPIName(name))}@${encodeURIComponent(version)}`,
   // Lockfiles do not distinguish direct from transitive dependencies, so --scanType has no effect here.
   detect(projectPath) {
     return dedupeDependencies(
