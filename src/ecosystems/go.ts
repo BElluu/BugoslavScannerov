@@ -41,6 +41,9 @@ export const go: EcosystemDefinition = {
   label: "Go Modules",
   osvName: "Go",
   normalizeName: name => name.toLowerCase(),
+  // The purl spec keeps the "v" prefix of Go versions; we store versions without it.
+  purl: (name, version) =>
+    `pkg:golang/${name.split("/").map(encodeURIComponent).join("/")}@${encodeURIComponent(version.startsWith("v") ? version : `v${version}`)}`,
   detect(projectPath, scanType) {
     return dedupeDependencies(
       findFiles(projectPath, name => name === "go.mod").flatMap(path => {
