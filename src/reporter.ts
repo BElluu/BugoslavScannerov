@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Config, FixSuggestion, ScanResult } from './types.js';
 import { escapeHtml, safeUrl } from './utils.js';
+import { ECOSYSTEMS } from './ecosystems/index.js';
 
 export async function generateReport(
   results: ScanResult[],
@@ -118,39 +119,21 @@ function generateMarkdown(results: ScanResult[], config: Config, allResults: Sca
     if (fixable.length > 0) {
       md += `### ✅ Fixable (${fixable.length})\n\n`;
 
-      // Group by ecosystem
-      const npmFixes = fixable.filter(f => f.ecosystem === "npm");
-      const nugetFixes = fixable.filter(f => f.ecosystem === "nuget");
+      for (const { id, label } of ECOSYSTEMS) {
+        const fixes = fixable.filter(f => f.ecosystem === id);
+        if (fixes.length === 0) continue;
 
-      if (npmFixes.length > 0) {
-        md += `#### 📦 NPM Packages\n\n`;
+        md += `#### 📦 ${label}\n\n`;
         md += "```bash\n";
         md += "# Update commands:\n";
-        npmFixes.forEach(fix => {
+        fixes.forEach(fix => {
           md += `${fix.command}\n`;
         });
         md += "```\n\n";
 
         md += "| Package | Current | Recommended | CVEs Fixed | Notes |\n";
         md += "|---------|---------|-------------|------------|-------|\n";
-        npmFixes.forEach(fix => {
-          md += `| \`${fix.package}\` | ${fix.currentVersion} | ${fix.recommendedVersion} | ${fix.vulnerabilityCount} | ${fix.reason || ''} |\n`;
-        });
-        md += "\n";
-      }
-
-      if (nugetFixes.length > 0) {
-        md += `#### 📦 .NET Packages\n\n`;
-        md += "```bash\n";
-        md += "# Update commands:\n";
-        nugetFixes.forEach(fix => {
-          md += `${fix.command}\n`;
-        });
-        md += "```\n\n";
-
-        md += "| Package | Current | Recommended | CVEs Fixed | Notes |\n";
-        md += "|---------|---------|-------------|------------|-------|\n";
-        nugetFixes.forEach(fix => {
+        fixes.forEach(fix => {
           md += `| \`${fix.package}\` | ${fix.currentVersion} | ${fix.recommendedVersion} | ${fix.vulnerabilityCount} | ${fix.reason || ''} |\n`;
         });
         md += "\n";
@@ -914,44 +897,21 @@ function generateFixSuggestionsHTML(fixSuggestions: FixSuggestion[]): string {
   html += '<h2>🔧 Fix Suggestions</h2>';
 
   if (fixable.length > 0) {
-    const npmFixes = fixable.filter(f => f.ecosystem === "npm");
-    const nugetFixes = fixable.filter(f => f.ecosystem === "nuget");
+    for (const { id, label } of ECOSYSTEMS) {
+      const fixes = fixable.filter(f => f.ecosystem === id);
+      if (fixes.length === 0) continue;
 
-    if (npmFixes.length > 0) {
-      html += '<h3>📦 NPM Packages</h3>';
+      html += `<h3>📦 ${escapeHtml(label)}</h3>`;
       html += '<div class="fix-commands">';
       html += '# Run these commands to fix vulnerabilities:<br>';
-      npmFixes.forEach(fix => {
+      fixes.forEach(fix => {
         html += `${escapeHtml(fix.command)}<br>`;
       });
       html += '</div>';
 
       html += '<table class="fix-table">';
       html += '<tr><th>Package</th><th>Current</th><th>Recommended</th><th>CVEs</th><th>Notes</th></tr>';
-      npmFixes.forEach(fix => {
-        html += '<tr>';
-        html += `<td><code>${escapeHtml(fix.package)}</code></td>`;
-        html += `<td>${escapeHtml(fix.currentVersion)}</td>`;
-        html += `<td><strong>${escapeHtml(fix.recommendedVersion)}</strong></td>`;
-        html += `<td>${fix.vulnerabilityCount}</td>`;
-        html += `<td><span class="fix-badge ${fix.breakingChange ? 'breaking' : 'safe'}">${escapeHtml(fix.reason)}</span></td>`;
-        html += '</tr>';
-      });
-      html += '</table>';
-    }
-
-    if (nugetFixes.length > 0) {
-      html += '<h3>📦 .NET Packages</h3>';
-      html += '<div class="fix-commands">';
-      html += '# Run these commands to fix vulnerabilities:<br>';
-      nugetFixes.forEach(fix => {
-        html += `${escapeHtml(fix.command)}<br>`;
-      });
-      html += '</div>';
-
-      html += '<table class="fix-table">';
-      html += '<tr><th>Package</th><th>Current</th><th>Recommended</th><th>CVEs</th><th>Notes</th></tr>';
-      nugetFixes.forEach(fix => {
+      fixes.forEach(fix => {
         html += '<tr>';
         html += `<td><code>${escapeHtml(fix.package)}</code></td>`;
         html += `<td>${escapeHtml(fix.currentVersion)}</td>`;

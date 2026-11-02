@@ -7,11 +7,21 @@ function parse(version: string): ParsedVersion {
   const cleaned = version.trim().replace(/^v/i, "").split("+")[0];
   const dash = cleaned.indexOf("-");
   const corePart = dash === -1 ? cleaned : cleaned.slice(0, dash);
-  const pre = dash === -1 ? "" : cleaned.slice(dash + 1);
-  return {
-    core: corePart.split(".").map(p => parseInt(p, 10) || 0),
-    prerelease: pre ? pre.toLowerCase().split(".") : [],
-  };
+  const dashPre = dash === -1 ? [] : cleaned.slice(dash + 1).toLowerCase().split(".");
+
+  const core: number[] = [];
+  const prerelease: string[] = [];
+  for (const segment of corePart.split(".")) {
+    if (prerelease.length === 0 && /^\d+$/.test(segment)) {
+      core.push(Number(segment));
+      continue;
+    }
+    // PEP 440 attaches the pre-release tag to the last number: 1.0rc1, 2.0b2, 1.0.dev3
+    const attached = segment.match(/^(\d+)([a-z].*)$/i);
+    if (attached && prerelease.length === 0) core.push(Number(attached[1]));
+    prerelease.push(...(attached ? attached[2] : segment).toLowerCase().match(/[a-z]+|\d+/g)!);
+  }
+  return { core, prerelease: [...prerelease, ...dashPre] };
 }
 
 /**

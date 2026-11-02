@@ -24,13 +24,13 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** Fetches JSON, retrying on network errors, 429 and 5xx. Throws when retries are exhausted. */
-export async function fetchJson<T>(url: string, init?: RequestInit, attempts = 4): Promise<T> {
+/** Fetches a URL, retrying on network errors, 429 and 5xx. Throws when retries are exhausted. */
+async function fetchOk(url: string, init?: RequestInit, attempts = 4): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const response = await fetch(url, init);
-      if (response.ok) return (await response.json()) as T;
+      if (response.ok) return response;
       lastError = new Error(`${url} responded ${response.status}`);
       if (response.status !== 429 && response.status < 500) break;
     } catch (error) {
@@ -39,6 +39,14 @@ export async function fetchJson<T>(url: string, init?: RequestInit, attempts = 4
     await sleep(500 * 2 ** attempt);
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function fetchJson<T>(url: string, init?: RequestInit, attempts?: number): Promise<T> {
+  return (await fetchOk(url, init, attempts)).json() as Promise<T>;
+}
+
+export async function fetchText(url: string, init?: RequestInit, attempts?: number): Promise<string> {
+  return (await fetchOk(url, init, attempts)).text();
 }
 
 const HTML_ESCAPES: Record<string, string> = {

@@ -1,7 +1,7 @@
 {
   "name": "bugoslav-scannerov",
   "version": "2.0.0",
-  "description": "CLI vulnerability scanner for .NET and TypeScript/JavaScript projects, powered by OSV with CISA KEV and EPSS prioritisation",
+  "description": "CLI vulnerability scanner for npm, NuGet, PyPI, Go and Cargo projects, powered by OSV with CISA KEV and EPSS prioritisation",
   "type": "module",
   "bin": {
     "bugoslav": "dist/index.js"
@@ -31,6 +31,9 @@
     "cisa-kev",
     "dotnet",
     "nuget",
+    "pypi",
+    "golang",
+    "cargo",
     "npm",
     "sca"
   ],
