@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Dependency, EcosystemDefinition, ScanType } from "../types.js";
-import { dedupeDependencies, readJson } from "../files.js";
+import { dedupeDependencies, readJson, withManifest } from "../files.js";
 import { fetchJson } from "../utils.js";
 
 /**
@@ -84,7 +84,9 @@ export const npm: EcosystemDefinition = {
   detect(projectPath, scanType) {
     if (!existsSync(join(projectPath, "package.json"))) return [];
     console.log("📦 Detected npm project");
-    return parseNpmDependencies(projectPath, scanType);
+    const lock = join(projectPath, "package-lock.json");
+    const manifest = existsSync(lock) ? lock : join(projectPath, "package.json");
+    return withManifest(parseNpmDependencies(projectPath, scanType), projectPath, manifest);
   },
   registry: {
     async versions(name) {

@@ -30,12 +30,15 @@ export interface Dependency {
   name: string;
   version: string;
   ecosystem: Ecosystem;
+  /** Manifest or lockfile the dependency was read from, relative to the scanned project. */
+  manifest?: string;
 }
 
 export interface ScanResult {
   package: string;
   version: string;
   ecosystem: Ecosystem;
+  manifest?: string;
   /** CVE id when the advisory has one, otherwise the advisory's own id. */
   cveId: string;
   ghsaId?: string;
@@ -54,12 +57,14 @@ export interface ScanResult {
 
 export interface Config {
   scanType: ScanType;
-  outputFormat: "markdown" | "json" | "html";
+  outputFormat: "markdown" | "json" | "html" | "sarif";
   outputPath: string;
   skipPackages: string[];
   suggestFixes: boolean;
   failOn: FailOn;
   enrich: boolean;
+  /** Path to the config file with ignore rules; defaults to .bugoslavrc.json in the project. */
+  configPath?: string;
 }
 
 export interface OSVVulnerability {

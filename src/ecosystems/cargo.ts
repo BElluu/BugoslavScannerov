@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { EcosystemDefinition } from "../types.js";
-import { dedupeDependencies, findFiles, parseTomlLockPackages } from "../files.js";
+import { dedupeDependencies, findFiles, parseTomlLockPackages, withManifest } from "../files.js";
 import { fetchText } from "../utils.js";
 
 /** Path of a crate in the crates.io sparse index. */
@@ -22,9 +22,10 @@ export const cargo: EcosystemDefinition = {
       findFiles(projectPath, name => name === "Cargo.lock").flatMap(path => {
         console.log(`📦 Detected Rust lockfile: ${path}`);
         // Workspace members and git/path dependencies have no registry source.
-        return parseTomlLockPackages(readFileSync(path, "utf-8"))
+        const deps = parseTomlLockPackages(readFileSync(path, "utf-8"))
           .filter(p => p.source?.includes("registry+"))
           .map(p => ({ name: p.name, version: p.version, ecosystem: "cargo" as const }));
+        return withManifest(deps, projectPath, path);
       })
     );
   },

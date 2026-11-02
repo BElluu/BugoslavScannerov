@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Dependency, EcosystemDefinition } from "../types.js";
-import { dedupeDependencies, findFiles, parseTomlLockPackages, readJson } from "../files.js";
+import { dedupeDependencies, findFiles, parseTomlLockPackages, readJson, withManifest } from "../files.js";
 import { fetchJson } from "../utils.js";
 
 /** PEP 503 name normalisation. */
@@ -73,7 +73,7 @@ export const pypi: EcosystemDefinition = {
     return dedupeDependencies(
       findFiles(projectPath, isManifest).flatMap(path => {
         console.log(`📦 Detected Python manifest: ${path}`);
-        return parseManifest(path);
+        return withManifest(parseManifest(path), projectPath, path);
       })
     );
   },

@@ -20,6 +20,9 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) =>
   return results;
 }
 
+/** An error caused by how the tool was invoked, shown to the user without a stack trace. */
+export class UsageError extends Error {}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
