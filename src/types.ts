@@ -1,4 +1,26 @@
-export type Ecosystem = "npm" | "nuget";
+export type Ecosystem = "npm" | "nuget" | "pypi" | "go" | "cargo";
+
+export type ScanType = "all" | "fast";
+
+/** Where to look up published versions of a package and how to install a specific one. */
+export interface Registry {
+  /** Published versions, oldest first. */
+  versions(name: string): Promise<string[]>;
+  command(name: string, version: string): string;
+}
+
+export interface EcosystemDefinition {
+  id: Ecosystem;
+  /** Section title in reports, e.g. "NPM Packages". */
+  label: string;
+  /** Ecosystem name as used by OSV. */
+  osvName: string;
+  /** Canonical form of a package name, used to match OSV data against ours. */
+  normalizeName(name: string): string;
+  /** Finds this ecosystem's manifests below `projectPath` and returns the dependencies; [] if there are none. */
+  detect(projectPath: string, scanType: ScanType): Dependency[];
+  registry: Registry;
+}
 
 export type Severity = "critical" | "high" | "medium" | "low" | "unknown";
 
@@ -31,7 +53,7 @@ export interface ScanResult {
 }
 
 export interface Config {
-  scanType: "all" | "fast";
+  scanType: ScanType;
   outputFormat: "markdown" | "json" | "html";
   outputPath: string;
   skipPackages: string[];
@@ -77,7 +99,7 @@ export interface OSVVulnerability {
 
 export interface FixSuggestion {
   package: string;
-  ecosystem: "npm" | "nuget";
+  ecosystem: Ecosystem;
   currentVersion: string;
   recommendedVersion?: string;
   fixAvailable: boolean;
@@ -86,12 +108,4 @@ export interface FixSuggestion {
   vulnerabilityCount: number;
   reason?: string;
   breakingChange?: boolean;
-  alternativePackage?: string;
-}
-
-export interface PackageVersionInfo {
-  name: string;
-  version: string;
-  publishedAt?: string;
-  isDeprecated?: boolean;
 }

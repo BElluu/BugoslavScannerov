@@ -2,14 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  findCsprojFiles,
-  parseCsprojPackageReferences,
-  parseDotNetDependencies,
-  parseNpmDependencies,
-  resolveNpmSpec,
-  resolveNuGetVersion,
-} from "../src/parsers.js";
+import { findFiles } from "../src/files.js";
+import { parseNpmDependencies, resolveNpmSpec } from "../src/ecosystems/npm.js";
+import { parseCsprojPackageReferences, parseDotNetDependencies, resolveNuGetVersion } from "../src/ecosystems/nuget.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "bugoslav-"));
 const write = (dir: string, name: string, content: unknown) =>
@@ -66,14 +61,14 @@ describe("npm", () => {
   });
 });
 
-describe("findCsprojFiles", () => {
+describe("findFiles", () => {
   test("finds projects in subfolders and ignores node_modules, bin and obj", () => {
     const dir = tmp();
     for (const sub of ["src/App", "node_modules/x", "src/App/bin", "obj"]) mkdirSync(join(dir, sub), { recursive: true });
     for (const file of ["src/App/App.csproj", "node_modules/x/X.csproj", "src/App/bin/B.csproj", "obj/O.csproj"]) {
       write(dir, file, "<Project/>");
     }
-    expect(findCsprojFiles(dir)).toEqual([join(dir, "src/App/App.csproj")]);
+    expect(findFiles(dir, name => name.endsWith(".csproj"))).toEqual([join(dir, "src/App/App.csproj")]);
   });
 });
 

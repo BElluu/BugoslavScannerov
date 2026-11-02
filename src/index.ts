@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { scanWithOSV } from "./osv.js";
 import { enrichResults } from "./enrich.js";
-import { dedupeDependencies, findCsprojFiles, parseDotNetDependencies, parseNpmDependencies } from "./parsers.js";
+import { ECOSYSTEMS } from "./ecosystems/index.js";
+import { dedupeDependencies } from "./files.js";
 import { generateReport } from "./reporter.js";
 import { calculateStats, deduplicateResults, filterSkippedPackages, shouldFail } from "./results.js";
 import { suggestFixes } from "./fix-suggester.js";
@@ -76,7 +76,7 @@ async function main(): Promise<number> {
 
   const dependencies = detectAndParse(projectPath, config.scanType);
   if (dependencies.length === 0) {
-    throw new UsageError("No dependencies found. Make sure package.json or .csproj files exist.");
+    throw new UsageError("No dependencies found. Supported: package.json, *.csproj, requirements.txt, poetry.lock, uv.lock, Pipfile.lock, go.mod, Cargo.lock.");
   }
   console.log(`📦 Found ${dependencies.length} dependencies to scan\n`);
 
@@ -112,19 +112,7 @@ async function main(): Promise<number> {
 }
 
 function detectAndParse(projectPath: string, scanType: Config["scanType"]): Dependency[] {
-  const dependencies: Dependency[] = [];
-
-  if (existsSync(join(projectPath, "package.json"))) {
-    console.log("📦 Detected npm project");
-    dependencies.push(...parseNpmDependencies(projectPath, scanType));
-  }
-
-  for (const csproj of findCsprojFiles(projectPath)) {
-    console.log(`📦 Detected .NET project: ${csproj}`);
-    dependencies.push(...parseDotNetDependencies(csproj, scanType));
-  }
-
-  return dedupeDependencies(dependencies);
+  return dedupeDependencies(ECOSYSTEMS.flatMap(ecosystem => ecosystem.detect(projectPath, scanType)));
 }
 
 function printSummary(
@@ -154,10 +142,10 @@ function printSummary(
   console.log("🔧 FIX SUGGESTIONS");
   console.log("=".repeat(60));
   console.log(`${fixable.length} of ${fixSuggestions!.length} vulnerable packages can be fixed\n`);
-  for (const [label, ecosystem] of [["📦 NPM Packages:", "npm"], ["📦 .NET Packages:", "nuget"]] as const) {
-    const fixes = fixable.filter(f => f.ecosystem === ecosystem);
+  for (const { id, label } of ECOSYSTEMS) {
+    const fixes = fixable.filter(f => f.ecosystem === id);
     if (fixes.length === 0) continue;
-    console.log(label);
+    console.log(`📦 ${label}:`);
     for (const fix of fixes.slice(0, 5)) {
       console.log(`  ${fix.package} ${fix.currentVersion} → ${fix.recommendedVersion}`);
       console.log(`    ${fix.command}`);

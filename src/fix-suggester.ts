@@ -1,37 +1,10 @@
-import type { Ecosystem, FixSuggestion, ScanResult } from "./types.js";
+import type { FixSuggestion, ScanResult } from "./types.js";
+import { ecosystemById } from "./ecosystems/index.js";
 import { compareVersions, majorVersion } from "./version.js";
-import { fetchJson, mapLimit } from "./utils.js";
+import { mapLimit } from "./utils.js";
 
-interface Registry {
-  /** Published versions, oldest first. */
-  versions(name: string): Promise<string[]>;
-  command(name: string, version: string): string;
-}
-
-const REGISTRIES: Record<Ecosystem, Registry> = {
-  npm: {
-    async versions(name) {
-      // The abbreviated document is much smaller than the full packument.
-      const data = await fetchJson<{ versions?: Record<string, unknown> }>(
-        `https://registry.npmjs.org/${encodeURIComponent(name)}`,
-        { headers: { Accept: "application/vnd.npm.install-v1+json" } }
-      );
-      return Object.keys(data.versions ?? {});
-    },
-    command: (name, version) => `npm install ${name}@${version}`,
-  },
-  nuget: {
-    async versions(name) {
-      const data = await fetchJson<{ versions?: string[] }>(
-        `https://api.nuget.org/v3-flatcontainer/${name.toLowerCase()}/index.json`
-      );
-      return data.versions ?? [];
-    },
-    command: (name, version) => `dotnet add package ${name} --version ${version}`,
-  },
-};
-
-const isStable = (version: string) => !version.includes("-");
+// Release versions only: numeric segments, optionally with build metadata (e.g. 1.2.3, 1.2.3+incompatible).
+const isStable = (version: string) => /^v?\d+(\.\d+)*(\+[\w.]+)?$/.test(version);
 
 /** One suggestion per vulnerable package version, fixable ones first, then fewest breaking changes. */
 export async function suggestFixes(vulnerabilities: ScanResult[]): Promise<FixSuggestion[]> {
@@ -62,9 +35,10 @@ async function suggestFix(vulns: ScanResult[]): Promise<FixSuggestion> {
   };
   const unfixable = (reason: string): FixSuggestion => ({ ...base, fixAvailable: false, reason });
 
+  const { registry } = ecosystemById(ecosystem);
   let published: string[];
   try {
-    published = await REGISTRIES[ecosystem].versions(name);
+    published = await registry.versions(name);
   } catch (error) {
     return unfixable(`Unable to fetch package information: ${error instanceof Error ? error.message : error}`);
   }
@@ -95,7 +69,7 @@ async function suggestFix(vulns: ScanResult[]): Promise<FixSuggestion> {
     ...base,
     recommendedVersion,
     fixAvailable: true,
-    command: REGISTRIES[ecosystem].command(name, recommendedVersion),
+    command: registry.command(name, recommendedVersion),
     breakingChange,
     reason,
   };

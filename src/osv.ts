@@ -2,12 +2,11 @@ import type { Dependency, OSVVulnerability, ScanResult, Severity } from "./types
 import { cvss3BaseScore, severityFromScore } from "./cvss.js";
 import { compareVersions, fixedVersionFromEvents } from "./version.js";
 import { chunkArray, fetchJson, mapLimit } from "./utils.js";
+import { ecosystemById } from "./ecosystems/index.js";
 
 const OSV_API = "https://api.osv.dev/v1";
 const BATCH_SIZE = 1000; // OSV querybatch limit
 const DETAIL_CONCURRENCY = 8;
-
-const OSV_ECOSYSTEM: Record<Dependency["ecosystem"], string> = { npm: "npm", nuget: "NuGet" };
 
 interface BatchQuery {
   package: { name: string; ecosystem: string };
@@ -50,7 +49,7 @@ async function queryAdvisoryIds(dependencies: Dependency[]): Promise<Array<[Depe
   let pending = found.map(([dep], index) => ({
     index,
     query: {
-      package: { name: dep.name, ecosystem: OSV_ECOSYSTEM[dep.ecosystem] },
+      package: { name: dep.name, ecosystem: ecosystemById(dep.ecosystem).osvName },
       version: dep.version,
     } as BatchQuery,
   }));
@@ -131,11 +130,12 @@ export function extractSeverity(vuln: OSVVulnerability): { severity: Severity; c
  * package and range count.
  */
 export function extractFixedVersion(dep: Dependency, vuln: OSVVulnerability): string | undefined {
+  const ecosystem = ecosystemById(dep.ecosystem);
   const fixes: string[] = [];
   for (const affected of vuln.affected ?? []) {
     if (!affected.package) continue;
-    if (affected.package.ecosystem.toLowerCase() !== OSV_ECOSYSTEM[dep.ecosystem].toLowerCase()) continue;
-    if (affected.package.name.toLowerCase() !== dep.name.toLowerCase()) continue;
+    if (affected.package.ecosystem.toLowerCase() !== ecosystem.osvName.toLowerCase()) continue;
+    if (ecosystem.normalizeName(affected.package.name) !== ecosystem.normalizeName(dep.name)) continue;
 
     for (const range of affected.ranges ?? []) {
       if (range.type === "GIT") continue;
